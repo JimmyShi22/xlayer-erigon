@@ -59,19 +59,6 @@ func getNextPoolTransactions(ctx context.Context, cfg SequenceBlockCfg, executio
 	transactions = append(transactions, yieldedTxs...)
 	ids = append(ids, yieldedIds...)
 
-	for _, tx := range transactions {
-		utils.LogTrace(
-			tx.Hash().String(),         // txhash
-			utils.ServiceNameSequencer, // serviceName
-			utils.StepSeqReceiveTx.ID,  // processId
-			utils.StepSeqReceiveTx.Key, // processWord
-			executionAt+1,              // blockHeight
-			"",                         // blockHash
-			0,                          // blockTime
-			int8(tx.Type()),            // transactionType
-		)
-	}
-
 	return transactions, ids, allConditionsOk, err
 }
 

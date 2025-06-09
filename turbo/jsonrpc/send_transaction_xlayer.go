@@ -231,6 +231,17 @@ func (api *APIImpl) validateTransaction(ctx context.Context, encodedTx hexutilit
 		return common.Hash{}, err
 	}
 
+	utils.LogTrace(
+		txn.Hash().String(),        // txhash
+		utils.ServiceNameSequencer, // serviceName
+		utils.StepSeqReceiveTx.ID,  // processId
+		utils.StepSeqReceiveTx.Key, // processWord
+		0,                          // blockHeight
+		"",                         // blockHash
+		0,                          // blockTime
+		int8(txn.Type()),           // transactionType
+	)
+
 	sender, err := txn.Sender(*signer)
 	if err != nil {
 		return common.Hash{}, err

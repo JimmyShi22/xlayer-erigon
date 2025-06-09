@@ -12,8 +12,8 @@ var (
 	StepRPCFinishBlock  = ProcessStep{15062, "xlayer_rpc_finish_block"}
 
 	// Sequencer
-	StepSeqBeginBlock        = ProcessStep{15030, "xlayer_seq_begin_block"}
-	StepSeqReceiveTx         = ProcessStep{15032, "xlayer_seq_receive_tx"}
+	StepSeqReceiveTx         = ProcessStep{15030, "xlayer_seq_receive_tx"}
+	StepSeqBeginBlock        = ProcessStep{15032, "xlayer_seq_begin_block"}
 	StepSeqPackageTx         = ProcessStep{15034, "xlayer_seq_package_tx"}
 	StepSeqEndBlock          = ProcessStep{15036, "xlayer_seq_end_block"}
 	StepSeqVerifyBlockBegin  = ProcessStep{15038, "xlayer_seq_verify_block_begin"}
