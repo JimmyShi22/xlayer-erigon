@@ -56,6 +56,12 @@ if [ ! -d "op-geth" ]; then
     cd op-geth
     docker build -t op-geth:v1.101511.0 .
     cd ..
+else
+    cp $PWD_DIR/op-docker/Dockerfile-opgeth op-geth/Dockerfile
+    cd op-geth
+    git checkout v1.101511.0
+    docker build -t op-geth:v1.101511.0 .
+    cd ..
 fi
 
 cd $PWD_DIR
