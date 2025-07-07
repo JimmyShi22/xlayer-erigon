@@ -502,18 +502,29 @@ services:
   op-challenger:
     image: "${OP_STACK_IMAGE_TAG}"
     container_name: op-challenger
+    environment:
+      - L1_RPC_URL_IN_DOCKER=${L1_RPC_URL_IN_DOCKER}
+      - L1_BEACON_URL_IN_DOCKER=${L1_BEACON_URL_IN_DOCKER}
+      - DISPUTE_GAME_FACTORY_ADDRESS=${DISPUTE_GAME_FACTORY_ADDRESS}
+      - OP_CHALLENGER_PRIVATE_KEY=${OP_CHALLENGER_PRIVATE_KEY}
     volumes:
       - ./data/cannon-data:/data
       - ./config-op/rollup.json:/rollup.json
       - ./config-op/genesis.json:/l2-genesis.json
+    depends_on:
+      - op-node
     command:
       - /app/op-challenger/bin/op-challenger
       - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
+      - --l1-beacon=${L1_BEACON_URL_IN_DOCKER}
+      - --l2-eth-rpc=http://op-geth:8545
       - --rollup-rpc=http://op-node:9545
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
-      - --dispute-type=254
       - --cannon-bin=/data/op-program
+      - --cannon-server=/data/op-program
       - --cannon-prestate=/data/prestate.json.gz
       - --cannon-rollup-config=/rollup.json
       - --cannon-l2-genesis=/l2-genesis.json
       - --private-key=${OP_CHALLENGER_PRIVATE_KEY}
+      - --trace-type=cannon
+      - --datadir=/data

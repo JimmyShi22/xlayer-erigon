@@ -31,16 +31,29 @@ cd $PWD_DIR
 EXPORT_DIR="$PWD_DIR/data/cannon-data"
 mkdir -p $EXPORT_DIR
 
-docker run \
-  --network "$DOCKER_NETWORK" \
-  -v "$PWD_DIR/config-op:/config" \
-  -v "$EXPORT_DIR:/prestate-out" \
-  "$OP_STACK_IMAGE_TAG" \
-  /app/op-challenger/bin/op-challenger generate \
-    --l2-genesis /config/genesis.json \
-    --rollup-config /config/rollup.json \
-    --output-dir /prestate-out \
-    --cannon-bin /app/op-program/bin/op-program \
-    --cannon-prestate /app/op-program/bin/prestate.json \
-    --cannon-rollup-config /config/rollup.json \
-    --cannon-l2-genesis /config/genesis.json
+# Note: The prestate files should already be generated in the Docker image during build
+# If we need to regenerate them, we should use cannon directly, not op-challenger
+echo "Checking for existing prestate files..."
+if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
+    echo "Prestate files missing, copying from Docker image..."
+    # Create temporary container to extract prestate files
+    TEMP_CONTAINER="temp-prestate-extract"
+    docker create --name "$TEMP_CONTAINER" "$OP_STACK_IMAGE_TAG"
+    
+    # Extract op-program and prestate files
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/op-program "$EXPORT_DIR/op-program" || echo "Warning: Could not copy op-program"
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate.json "$EXPORT_DIR/prestate.json" || echo "Warning: Could not copy prestate.json"
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate-proof.json "$EXPORT_DIR/prestate-proof.json" || echo "Warning: Could not copy prestate-proof.json"
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/meta.json "$EXPORT_DIR/meta.json" || echo "Warning: Could not copy meta.json"
+    
+    # Cleanup
+    docker rm -f "$TEMP_CONTAINER"
+    
+    # Gzip prestate.json if it exists
+    if [ -f "$EXPORT_DIR/prestate.json" ]; then
+        gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
+        echo "✅ Created prestate.json.gz"
+    fi
+else
+    echo "✅ Prestate files already exist"
+fi
