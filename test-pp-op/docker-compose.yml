@@ -498,3 +498,22 @@ services:
     ports:
       - 15576:5576
     command: ["run", "--cfg=/etc/aggkit/aggkit.toml", "--components=aggoracle"]
+
+  op-challenger:
+    image: "${OP_STACK_IMAGE_TAG}"
+    container_name: op-challenger
+    volumes:
+      - ./data/cannon-data:/data
+      - ./config-op/rollup.json:/rollup.json
+      - ./config-op/genesis.json:/l2-genesis.json
+    command:
+      - /app/op-challenger/bin/op-challenger
+      - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
+      - --rollup-rpc=http://op-node:9545
+      - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
+      - --dispute-type=254
+      - --cannon-bin=/data/op-program
+      - --cannon-prestate=/data/prestate.json.gz
+      - --cannon-rollup-config=/rollup.json
+      - --cannon-l2-genesis=/l2-genesis.json
+      - --private-key=${OP_CHALLENGER_PRIVATE_KEY}

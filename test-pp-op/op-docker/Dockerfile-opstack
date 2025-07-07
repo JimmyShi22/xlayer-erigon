@@ -33,13 +33,26 @@ RUN make cannon
 # Generate prestate files
 RUN make cannon-prestate || echo "cannon-prestate failed, trying alternative approach"
 
+# build op-challenger
+RUN make op-challenger
+RUN make op-dispute-mon
+RUN make op-program
+RUN make cannon
+RUN make reproducible-prestate
+
 # Alternative approach: create dummy prestate files if generation fails
-RUN if [ ! -f "op-program/bin/prestate-proof.json" ]; then \
-        mkdir -p op-program/bin && \
-        echo '{"pre":"0x03c7ae758795765c6664a5d39bf63841c71ff191e9189522bad8ebff5d4eca98","post":"0x0000000000000000000000000000000000000000000000000000000000000000","vm":"cannon"}' > op-program/bin/prestate-proof.json && \
-        echo '{"timestamp":0,"blockhash":"0x0000000000000000000000000000000000000000000000000000000000000000","offset":0}' > op-program/bin/meta.json && \
-        echo '{"pre":"0x03c7ae758795765c6664a5d39bf63841c71ff191e9189522bad8ebff5d4eca98"}' > op-program/bin/prestate.json; \
-    fi
+# RUN if [ ! -f "op-program/bin/prestate-proof.json" ]; then \
+#         mkdir -p op-program/bin && \
+#         echo '{"pre":"0x03c7ae758795765c6664a5d39bf63841c71ff191e9189522bad8ebff5d4eca98","post":"0x0000000000000000000000000000000000000000000000000000000000000000","vm":"cannon"}' > op-program/bin/prestate-proof.json && \
+#         echo '{"timestamp":0,"blockhash":"0x0000000000000000000000000000000000000000000000000000000000000000","offset":0}' > op-program/bin/meta.json && \
+#         echo '{"pre":"0x03c7ae758795765c6664a5d39bf63841c71ff191e9189522bad8ebff5d4eca98"}' > op-program/bin/prestate.json; \
+#     fi
 
 # Build everything else
 RUN make build
+
+RUN mkdir -p /cannon-export && \
+    cp op-program/bin/op-program /cannon-export/ && \
+    cp op-program/bin/prestate.json /cannon-export/ && \
+    cp op-program/bin/prestate-proof.json /cannon-export/ && \
+    cp op-program/bin/meta.json /cannon-export/

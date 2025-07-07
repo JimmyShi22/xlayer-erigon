@@ -40,6 +40,13 @@ if [ ! -d "optimism" ]; then
     cd optimism
     docker build -t op-stack:v1.9.3 .
     cd ..
+
+else
+    cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile
+    cd optimism
+    git checkout v1.9.3
+    docker build -t op-stack:v1.9.3 .
+    cd ..
 fi
 
 if [ ! -d "op-geth" ]; then
@@ -115,6 +122,41 @@ else
         sed_inplace "s/L2OO_ADDRESS=.*/L2OO_ADDRESS=$L2OO_ADDRESS/" .env
         export L2OO_ADDRESS
     fi
+
+    DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r .DisputeGameFactoryProxy "$(pwd)/$CONFIG_DIR/artifact.json")
+    if [ -z "$DISPUTE_GAME_FACTORY_ADDRESS" ] || [ "$DISPUTE_GAME_FACTORY_ADDRESS" == "null" ]; then
+        echo "Warning: DisputeGameFactoryProxy address not found in $CONFIG_DIR/artifact.json. op-proposer will fail if started."
+    else
+        echo "DisputeGameFactoryProxy address set for op-proposer: $DISPUTE_GAME_FACTORY_ADDRESS"
+        sed_inplace "s/DISPUTE_GAME_FACTORY_ADDRESS=.*/DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS/" .env
+        export DISPUTE_GAME_FACTORY_ADDRESS
+    fi
 fi
 
 source .env
+
+cd $PWD_DIR
+EXPORT_DIR="$PWD_DIR/data/cannon-data"
+CONTAINER_NAME="cannon-export-temp"
+mkdir -p $EXPORT_DIR
+
+# Note: Fault game fields are not supported in Optimism v1.9.3 and should not be added to rollup.json
+# The op-challenger service will work without these fields being in the rollup config
+
+# Start temp container
+docker create --name "$CONTAINER_NAME" "$OP_STACK_IMAGE_TAG"
+
+# Copy op-program and prestate.json from image
+docker cp "$CONTAINER_NAME":/app/op-program/bin/op-program "$EXPORT_DIR/op-program"
+docker cp "$CONTAINER_NAME":/app/op-program/bin/prestate.json "$EXPORT_DIR/prestate.json"
+
+gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
+
+HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
+echo "✅ Prestate hash: $HASH"
+
+docker rm -f $CONTAINER_NAME
+
+cd $PWD_DIR
+# Note: Not updating faultGameAbsolutePrestate in rollup.json as it's not supported in v1.9.3
+echo "✅ Cannon prestate files prepared successfully"
