@@ -40,13 +40,6 @@ if [ ! -d "optimism" ]; then
     cd optimism
     docker build -t op-stack:v1.9.3 .
     cd ..
-
-else
-    cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile
-    cd optimism
-    git checkout v1.9.3
-    docker build -t op-stack:v1.9.3 .
-    cd ..
 fi
 
 if [ ! -d "op-geth" ]; then
@@ -54,12 +47,6 @@ if [ ! -d "op-geth" ]; then
     git clone -b v1.101511.0 https://github.com/ethereum-optimism/op-geth.git
     cp $PWD_DIR/op-docker/Dockerfile-opgeth op-geth/Dockerfile
     cd op-geth
-    docker build -t op-geth:v1.101511.0 .
-    cd ..
-else
-    cp $PWD_DIR/op-docker/Dockerfile-opgeth op-geth/Dockerfile
-    cd op-geth
-    git checkout v1.101511.0
     docker build -t op-geth:v1.101511.0 .
     cd ..
 fi
