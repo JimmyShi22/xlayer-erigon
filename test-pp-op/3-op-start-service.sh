@@ -24,3 +24,23 @@ if echo "$LOG_OUTPUT" | grep -q "expected L2 genesis hash to match L2 block at g
 fi
 
 sleep 10
+
+source .env
+PWD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd $PWD_DIR
+EXPORT_DIR="$PWD_DIR/data/cannon-data"
+mkdir -p $EXPORT_DIR
+
+docker run \
+  --network "$DOCKER_NETWORK" \
+  -v "$PWD_DIR/config-op:/config" \
+  -v "$EXPORT_DIR:/prestate-out" \
+  "$OP_STACK_IMAGE_TAG" \
+  /app/op-challenger/bin/op-challenger generate \
+    --l2-genesis /config/genesis.json \
+    --rollup-config /config/rollup.json \
+    --output-dir /prestate-out \
+    --cannon-bin /app/op-program/bin/op-program \
+    --cannon-prestate /app/op-program/bin/prestate.json \
+    --cannon-rollup-config /config/rollup.json \
+    --cannon-l2-genesis /config/genesis.json
