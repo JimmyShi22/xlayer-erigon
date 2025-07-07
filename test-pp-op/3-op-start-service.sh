@@ -53,6 +53,33 @@ if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ];
     if [ -f "$EXPORT_DIR/prestate.json" ]; then
         gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
         echo "✅ Created prestate.json.gz"
+        
+        # Calculate the actual prestate hash and update devnetL1.json if needed
+        ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
+        DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
+        if [ -f "$DEVNET_L1_JSON" ]; then
+            CONFIGURED_HASH=$(jq -r '.faultGameAbsolutePrestate' "$DEVNET_L1_JSON" | sed 's/0x//')
+            if [ "$ACTUAL_HASH" != "$CONFIGURED_HASH" ]; then
+                echo "⚠️  Prestate hash mismatch detected!"
+                echo "   Configured: 0x$CONFIGURED_HASH"
+                echo "   Actual:     0x$ACTUAL_HASH"
+                echo "   Updating devnetL1.json with correct hash..."
+                
+                # Update the hash in devnetL1.json
+                jq --arg hash "0x$ACTUAL_HASH" '.faultGameAbsolutePrestate = $hash' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
+                echo "✅ Updated faultGameAbsolutePrestate in devnetL1.json"
+            else
+                echo "✅ Prestate hash matches configuration"
+            fi
+            
+            # Check faultGameGenesisOutputRoot consistency
+            GENESIS_OUTPUT_ROOT=$(jq -r '.faultGameGenesisOutputRoot' "$DEVNET_L1_JSON")
+            if [ "$GENESIS_OUTPUT_ROOT" = "0xDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF" ]; then
+                echo "⚠️  faultGameGenesisOutputRoot is using placeholder value"
+                echo "   This may cause challenger validation issues"
+                echo "   Consider updating it after L2 genesis is finalized"
+            fi
+        fi
     fi
 else
     echo "✅ Prestate files already exist"

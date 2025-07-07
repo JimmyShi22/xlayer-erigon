@@ -55,6 +55,47 @@ cd $PWD_DIR
 
 source .env
 
+# Ensure prestate files exist and devnetL1.json is consistent before deploying contracts
+EXPORT_DIR="$PWD_DIR/data/cannon-data"
+mkdir -p $EXPORT_DIR
+
+echo "Checking prestate consistency before contract deployment..."
+if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
+    echo "Extracting prestate files from Docker image..."
+    TEMP_CONTAINER="temp-prestate-extract"
+    docker create --name "$TEMP_CONTAINER" "$OP_STACK_IMAGE_TAG"
+    
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/op-program "$EXPORT_DIR/op-program" || echo "Warning: Could not copy op-program"
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate.json "$EXPORT_DIR/prestate.json" || echo "Warning: Could not copy prestate.json"
+    
+    docker rm -f "$TEMP_CONTAINER"
+    
+    if [ -f "$EXPORT_DIR/prestate.json" ]; then
+        gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
+        echo "✅ Created prestate.json.gz"
+    fi
+fi
+
+# Verify and update prestate hash in devnetL1.json
+if [ -f "$EXPORT_DIR/prestate.json.gz" ]; then
+    ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
+    DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
+    
+    if [ -f "$DEVNET_L1_JSON" ]; then
+        CONFIGURED_HASH=$(jq -r '.faultGameAbsolutePrestate' "$DEVNET_L1_JSON" | sed 's/0x//')
+        if [ "$ACTUAL_HASH" != "$CONFIGURED_HASH" ]; then
+            echo "⚠️  Updating prestate hash in devnetL1.json for contract deployment"
+            echo "   Old: 0x$CONFIGURED_HASH"
+            echo "   New: 0x$ACTUAL_HASH"
+            
+            jq --arg hash "0x$ACTUAL_HASH" '.faultGameAbsolutePrestate = $hash' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
+            echo "✅ Updated faultGameAbsolutePrestate for contract deployment"
+        else
+            echo "✅ Prestate hash is consistent in devnetL1.json"
+        fi
+    fi
+fi
+
 # deploy contracts, TODO, should we need to modify source code to deploy contracts?
 docker run \
   --network "$DOCKER_NETWORK" \
@@ -127,3 +168,21 @@ else
 fi
 
 source .env
+
+cd $PWD_DIR
+
+# Final check and ensure all prestate files are ready
+echo "=== Final prestate files check ==="
+if [ -f "$EXPORT_DIR/prestate.json.gz" ] && [ -f "$EXPORT_DIR/op-program" ]; then
+    echo "✅ All prestate files are ready for op-challenger:"
+    echo "   - op-program: $(ls -lh $EXPORT_DIR/op-program | awk '{print $5}')"
+    echo "   - prestate.json.gz: $(ls -lh $EXPORT_DIR/prestate.json.gz | awk '{print $5}')"
+    
+    # Verify hash one more time
+    FINAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
+    echo "   - prestate hash: 0x$FINAL_HASH"
+else
+    echo "⚠️  Missing prestate files - op-challenger may fail to start"
+fi
+
+echo "✅ Cannon prestate files prepared successfully"
