@@ -57,3 +57,5 @@ if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ];
 else
     echo "✅ Prestate files already exist"
 fi
+
+docker compose up -d op-challenger
