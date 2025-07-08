@@ -57,20 +57,6 @@ if [ ! -d "op-geth" ]; then
     cd ..
 fi
 
-
-if [ ! -d "zkevm-bridge-service" ]; then
-    echo "Cloning zkevm-bridge-service repository..."
-    git clone -b v0.6.0-RC16 https://github.com/0xPolygon/zkevm-bridge-service.git
-    # it has docker file
-    cd zkevm-bridge-service
-
-    # patch zkevm-bridge-service
-    git apply ../../patch/xlayer-bridge-service-0001-support-sync-L2-block-at-given-number.patch
-
-    docker build -t $XLAYER_BRIDGE_SERVICE_IMAGE_TAG .
-    cd ..
-fi
-
 cd $PWD_DIR
 
 source .env
