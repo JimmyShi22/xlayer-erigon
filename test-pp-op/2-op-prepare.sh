@@ -169,6 +169,41 @@ fi
 
 source .env
 
+
+# Calculate and update faultGameGenesisOutputRoot
+echo "🔍 Calculating faultGameGenesisOutputRoot..."
+GENESIS_OUTPUT_ROOT=$(docker run \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/app/packages/contracts-bedrock/deployments" \
+  -w /app/packages/contracts-bedrock \
+  "${OP_STACK_IMAGE_TAG}" \
+  bash -c "go run ../../op-node/cmd/main.go genesis output-root \
+      --l2-genesis-path=deployments/genesis.json \
+      --rollup-config=deployments/rollup.json" | tr -d '\n')
+
+if [ -n "$GENESIS_OUTPUT_ROOT" ] && [ "$GENESIS_OUTPUT_ROOT" != "null" ]; then
+    echo "✅ Calculated genesis output root: $GENESIS_OUTPUT_ROOT"
+    
+    # Update devnetL1.json with the correct genesis output root
+    DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
+    if [ -f "$DEVNET_L1_JSON" ]; then
+        CURRENT_ROOT=$(jq -r '.faultGameGenesisOutputRoot' "$DEVNET_L1_JSON")
+        if [ "$CURRENT_ROOT" != "$GENESIS_OUTPUT_ROOT" ]; then
+            echo "🔄 Updating faultGameGenesisOutputRoot in devnetL1.json"
+            echo "   Old: $CURRENT_ROOT"
+            echo "   New: $GENESIS_OUTPUT_ROOT"
+            
+            jq --arg root "$GENESIS_OUTPUT_ROOT" '.faultGameGenesisOutputRoot = $root' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
+            echo "✅ Updated faultGameGenesisOutputRoot for next deployment"
+        else
+            echo "✅ faultGameGenesisOutputRoot is already correct"
+        fi
+    fi
+else
+    echo "⚠️  Failed to calculate genesis output root, will use placeholder"
+fi
+
+
 cd $PWD_DIR
 
 # Final check and ensure all prestate files are ready

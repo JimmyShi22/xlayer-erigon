@@ -71,14 +71,6 @@ if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ];
             else
                 echo "✅ Prestate hash matches configuration"
             fi
-            
-            # Check faultGameGenesisOutputRoot consistency
-            GENESIS_OUTPUT_ROOT=$(jq -r '.faultGameGenesisOutputRoot' "$DEVNET_L1_JSON")
-            if [ "$GENESIS_OUTPUT_ROOT" = "0xDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF" ]; then
-                echo "⚠️  faultGameGenesisOutputRoot is using placeholder value"
-                echo "   This may cause challenger validation issues"
-                echo "   Consider updating it after L2 genesis is finalized"
-            fi
         fi
     fi
 else
