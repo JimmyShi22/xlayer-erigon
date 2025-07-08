@@ -47,7 +47,26 @@ if [ ! -d "op-geth" ]; then
     git clone -b v1.101511.0 https://github.com/ethereum-optimism/op-geth.git
     cp $PWD_DIR/op-docker/Dockerfile-opgeth op-geth/Dockerfile
     cd op-geth
-    docker build -t op-geth:v1.101511.0 .
+
+    # patch op-geth
+    git apply ../../patch/op-geth-0001-support-load-genesis-at-a-given-number.patch
+
+    docker build -t op-geth:local .
+    #docker build .
+    cd ..
+fi
+
+
+if [ ! -d "zkevm-bridge-service" ]; then
+    echo "Cloning zkevm-bridge-service repository..."
+    git clone -b v0.6.0-RC16 https://github.com/0xPolygon/zkevm-bridge-service.git
+    # it has docker file
+    cd zkevm-bridge-service
+
+    # patch zkevm-bridge-service
+    git apply ../../patch/xlayer-bridge-service-0001-support-sync-L2-block-at-given-number.patch
+
+    docker build -t zkevm-bridge-service:local .
     cd ..
 fi
 
@@ -82,10 +101,10 @@ cd $PWD_DIR
 cp ./config-op/genesis.json ./config-op/genesis-op-raw.json
 hack -action migrateGenesis -chaindata ./data/seq/chaindata/ -input ./config-op/genesis-op-raw.json   -output ./config-op/genesis.json
 
-# FORK_BLOCK_HEX=$(printf "0x%x" "$FORK_BLOCK")
-# cp ./config-op/genesis.json ./config-op/genesis-op-before-number.json
-# sed_inplace 's/"number": "0x0"/"number": "'"$FORK_BLOCK_HEX"'"/' ./config-op/genesis.json
-# sed_inplace 's/"number": 0/"number": '"$FORK_BLOCK"'/' ./config-op/rollup.json
+FORK_BLOCK_HEX=$(printf "0x%x" "$FORK_BLOCK")
+cp ./config-op/genesis.json ./config-op/genesis-op-before-number.json
+sed_inplace 's/"number": "0x0"/"number": "'"$FORK_BLOCK_HEX"'"/' ./config-op/genesis.json
+sed_inplace 's/"number": 0/"number": '"$FORK_BLOCK"'/' ./config-op/rollup.json
 
 # init op-geth
 OP_GETH_DATADIR="$(pwd)/data/op-geth"
