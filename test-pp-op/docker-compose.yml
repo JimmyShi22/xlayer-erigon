@@ -475,13 +475,13 @@ services:
     image: "${OP_STACK_IMAGE_TAG}"
     container_name: op-proposer
     environment:
-      - L2OO_ADDRESS=${L2OO_ADDRESS}
+      - DISPUTE_GAME_FACTORY_ADDRESS=${DISPUTE_GAME_FACTORY_ADDRESS}
     command:
       - /app/op-proposer/bin/op-proposer
       - --poll-interval=12s
       - --rpc.port=8560
       - --rollup-rpc=http://op-node:9545
-      - --l2oo-address=${L2OO_ADDRESS}
+      - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
       - --private-key=${OP_PROPOSER_PRIVATE_KEY}
       - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
     depends_on:
@@ -522,7 +522,7 @@ services:
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
       - --cannon-bin=/data/op-program
       - --cannon-server=/data/op-program
-      - --cannon-prestate=/data/prestate.json.gz
+      - --cannon-prestate=/data/absolute-prestate.txt
       - --cannon-rollup-config=/rollup.json
       - --cannon-l2-genesis=/l2-genesis.json
       - --private-key=${OP_CHALLENGER_PRIVATE_KEY}
