@@ -9,6 +9,7 @@ sed_inplace() {
   fi
 }
 
+source .env
 
 docker-compose stop xlayer-seq
 docker-compose stop xlayer-rpc
@@ -51,7 +52,7 @@ if [ ! -d "op-geth" ]; then
     # patch op-geth
     git apply ../../patch/op-geth-0001-support-load-genesis-at-a-given-number.patch
 
-    docker build -t op-geth:local .
+    docker build -t $OP_GETH_IMAGE_TAG .
     #docker build .
     cd ..
 fi
@@ -66,7 +67,7 @@ if [ ! -d "zkevm-bridge-service" ]; then
     # patch zkevm-bridge-service
     git apply ../../patch/xlayer-bridge-service-0001-support-sync-L2-block-at-given-number.patch
 
-    docker build -t zkevm-bridge-service:local .
+    docker build -t $XLAYER_BRIDGE_SERVICE_IMAGE_TAG .
     cd ..
 fi
 
