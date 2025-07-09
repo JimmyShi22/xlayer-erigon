@@ -482,6 +482,7 @@ services:
       - --rpc.port=8560
       - --rollup-rpc=http://op-node:9545
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
+      - --proposal-interval=12s
       - --private-key=${OP_PROPOSER_PRIVATE_KEY}
       - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
     depends_on:
@@ -522,7 +523,7 @@ services:
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
       - --cannon-bin=/data/op-program
       - --cannon-server=/data/op-program
-      - --cannon-prestate=/data/absolute-prestate.txt
+      - --cannon-prestate=/data/prestate.json
       - --cannon-rollup-config=/rollup.json
       - --cannon-l2-genesis=/l2-genesis.json
       - --private-key=${OP_CHALLENGER_PRIVATE_KEY}
