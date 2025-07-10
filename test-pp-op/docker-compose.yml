@@ -521,7 +521,7 @@ services:
       - --l2-eth-rpc=http://op-geth:8545
       - --rollup-rpc=http://op-node:9545
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
-      - --cannon-bin=/data/op-program
+      - --cannon-bin=/app/cannon/bin/cannon
       - --cannon-server=/data/op-program
       - --cannon-prestate=/data/prestate.json
       - --cannon-rollup-config=/rollup.json
