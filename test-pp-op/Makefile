@@ -16,9 +16,9 @@ STOP := $(DOCKER_COMPOSE) down --remove-orphans; \
 	rm -Rf ./l1-geth/execution/genesis.json; \
 	rm -Rf ./config-op/genesis-op-raw.json; \
 	rm -Rf ./config-op/intent.toml; \
-	rm -Rf ./config-op/state.json;
-
-
+	rm -Rf ./config-op/state.json; \
+	rm -Rf ./config-op/substate.json; \
+	rm -Rf ./config-op/implementations.json;
 	
 DEPLOY_ERC20_L1 := cd contracts && forge create OKBToken.sol:StandardERC20 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --rpc-url http://127.0.0.1:8545 --legacy --broadcast --constructor-args "OKBToken" "OKB" 1000000000
 INIT_ACCOUNT_1 := cast send -f 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --value 10ether 0x8f8E2d6cF621f30e9a11309D6A56A876281Fd534 --legacy --rpc-url http://127.0.0.1:8545

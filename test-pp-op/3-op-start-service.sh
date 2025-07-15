@@ -12,52 +12,7 @@ sed_inplace() {
 # Load environment variables early
 source .env
 
-# Start op-node first
-echo "🚀 Starting op-node..."
-docker compose up -d op-node
-
-# Wait for op-node to be healthy (10 seconds + health check)
-echo "⏳ Waiting for op-node to be healthy..."
-sleep 12
-
-echo "Adding game type to DisputeGameFactory via op-deployer..."
-
-# Use curl to get outputRoot
-OUTPUT_JSON=$(curl -s -X POST http://127.0.0.1:9545 \
-  -H "Content-Type: application/json" \
-  --data '{
-    "jsonrpc": "2.0",
-    "method": "optimism_outputAtBlock",
-    "params": ["0x0"],
-    "id": 1
-  }')
-
-# Extract outputRoot
-OUTPUT_ROOT=$(echo "$OUTPUT_JSON" | jq -r '.result.outputRoot')
-
-echo "Fetched outputRoot: $OUTPUT_ROOT"
-
-docker run \
-    --network "$DOCKER_NETWORK" \
-    -v "$(pwd)/$CONFIG_DIR:/deployments" \
-    -w /app \
-    "${OP_STACK_IMAGE_TAG}" \
-    bash -c "
-    set -e
-    /app/op-deployer/bin/op-deployer manage add-game-type \
-        --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
-        --artifacts-locator file://deployments \
-        --workdir /deployments \
-        --l2-chain-id 195 \
-        --dispute-game-type 0 \
-        --dispute-absolute-prestate $OUTPUT_ROOT \
-        --permissionless \
-    "
-echo "add-game-type completed"
-
-# Start op-batcher and op-proposer (they will wait for op-node health check)
-echo "🚀 Starting op-batcher and op-proposer..."
-docker compose up -d op-batcher op-proposer
+docker compose up -d op-batcher
 
 sleep 10
 # TODO, we need to reseach and fix it,  0 block hash mismatch
@@ -123,5 +78,50 @@ if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ];
 else
     echo "✅ Prestate files already exist"
 fi
+
+echo "Adding game type to DisputeGameFactory via op-deployer..."
+
+RPC_URL=http://127.0.0.1:8545
+
+# Retrieve existing values from chain for reference
+# Get permissioned game implementation
+PERMISSIONED_GAME_RAW=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRESS "gameImpls(uint32)" 1)
+# Convert 32-byte hex to 20-byte address (last 40 hex chars, with 0x prefix)
+PERMISSIONED_GAME="0x${PERMISSIONED_GAME_RAW: -40}"
+
+# Retrieve parameters from existing permissioned game
+ABSOLUTE_PRESTATE=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "absolutePrestate()")
+MAX_GAME_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxGameDepth()")
+SPLIT_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "splitDepth()")
+CLOCK_EXTENSION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "clockExtension()")
+MAX_CLOCK_DURATION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxClockDuration()")
+VM=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "vm()")
+ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
+L2_CHAIN_ID=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "l2ChainId()")
+
+docker run \
+    --network "$DOCKER_NETWORK" \
+    -v "$(pwd)/$CONFIG_DIR:/deployments" \
+    -w /app \
+    "${OP_STACK_IMAGE_TAG}" \
+    bash -c "
+    set -e
+    /app/op-deployer/bin/op-deployer manage add-game-type \
+        --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
+        --dispute-max-game-depth $MAX_GAME_DEPTH \
+        --dispute-split-depth $SPLIT_DEPTH \
+        --dispute-clock-extension $CLOCK_EXTENSION \
+        --dispute-max-clock-duration $MAX_CLOCK_DURATION \
+        --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
+        --vm-address $VM \
+        --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
+        --opcm-impl-address $OPCM_IMPL_ADDRESS \
+        --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
+        --op-chain-proxy-admin-address $PROXY_ADMIN \
+        --dispute-game-type 0 \
+        --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
+        --permissionless \
+    "
+echo "add-game-type completed"
 
 docker compose up -d op-challenger

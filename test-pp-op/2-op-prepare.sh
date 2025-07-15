@@ -200,47 +200,33 @@ hack -action migrateGenesis -chaindata ./data/seq/chaindata/ -input ./config-op/
 # sed_inplace 's/"number": "0x0"/"number": "'"$FORK_BLOCK_HEX"'"/' ./config-op/genesis.json
 # sed_inplace 's/"number": 0/"number": '"$FORK_BLOCK"'/' ./config-op/rollup.json
 
-# init op-geth
-OP_GETH_DATADIR="$(pwd)/data/op-geth"
-rm -rf "$OP_GETH_DATADIR"
-mkdir -p "$OP_GETH_DATADIR"
-docker compose run --no-deps \
-  -v "$(pwd)/$CONFIG_DIR/genesis.json:/genesis.json" \
-  op-geth \
-  --datadir "/datadir" \
-  --gcmode=archive \
-  init \
-  --state.scheme=hash \
-  /genesis.json
-
-echo "finished init op-geth"
-
 # Extract contract addresses from state.json and update .env file
 echo "🔧 Extracting contract addresses from state.json..."
 STATE_JSON="$PWD_DIR/config-op/state.json"
 
 if [ -f "$STATE_JSON" ]; then
     # Extract contract addresses from state.json
-    # The error "Cannot index array with string" means .opChainDeployments is probably an array, not an object.
-    # Try to handle both array and object cases.
-
-    # Try to get opChainDeployments as an object
     DEPLOYMENTS_TYPE=$(jq -r 'type' "$STATE_JSON")
     if [ "$DEPLOYMENTS_TYPE" = "object" ]; then
-        # Try to get opChainDeployments as an object or array
         OPCD_TYPE=$(jq -r '.opChainDeployments | type' "$STATE_JSON" 2>/dev/null)
         if [ "$OPCD_TYPE" = "object" ]; then
-            # Normal case: opChainDeployments is an object
             DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.opChainDeployments.DisputeGameFactoryProxy // empty' "$STATE_JSON")
             L2OO_ADDRESS=$(jq -r '.opChainDeployments.L2OutputOracleProxy // empty' "$STATE_JSON")
+            OPCM_IMPL_ADDRESS=$(jq -r '.appliedIntent.opcmAddress // empty' "$STATE_JSON")
+            SYSTEM_CONFIG_PROXY_ADDRESS=$(jq -r '.opChainDeployments.SystemConfigProxy // empty' "$STATE_JSON")
+            PROXY_ADMIN=$(jq -r '.superchainContracts.SuperchainProxyAdminImpl // empty' "$STATE_JSON")
         elif [ "$OPCD_TYPE" = "array" ]; then
-            # If it's an array, try to get the first element
             DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.opChainDeployments[0].DisputeGameFactoryProxy // empty' "$STATE_JSON")
             L2OO_ADDRESS=$(jq -r '.opChainDeployments[0].L2OutputOracleProxy // empty' "$STATE_JSON")
+            OPCM_IMPL_ADDRESS=$(jq -r '.appliedIntent.opcmAddress // empty' "$STATE_JSON")
+            SYSTEM_CONFIG_PROXY_ADDRESS=$(jq -r '.opChainDeployments[0].SystemConfigProxy // empty' "$STATE_JSON")
+            PROXY_ADMIN=$(jq -r '.superchainContracts.SuperchainProxyAdminImpl // empty' "$STATE_JSON")
         else
-            # Not found
             DISPUTE_GAME_FACTORY_ADDRESS=""
             L2OO_ADDRESS=""
+            OPCM_IMPL_ADDRESS=""
+            SYSTEM_CONFIG_PROXY_ADDRESS=""
+            PROXY_ADMIN=""
         fi
 
         # Update .env if found
@@ -258,10 +244,34 @@ if [ -f "$STATE_JSON" ]; then
             echo "⚠️  L2OutputOracleProxy address not found in opChainDeployments"
         fi
 
+        if [ -n "$OPCM_IMPL_ADDRESS" ]; then
+            echo "✅ Found opcmAddress address: $OPCM_IMPL_ADDRESS"
+            sed_inplace "s/OPCM_IMPL_ADDRESS=.*/OPCM_IMPL_ADDRESS=$OPCM_IMPL_ADDRESS/" .env
+        else
+            echo "⚠️  opcmAddress address not found in opChainDeployments"
+        fi
+
+        if [ -n "$SYSTEM_CONFIG_PROXY_ADDRESS" ]; then
+            echo "✅ Found SystemConfigProxy address: $SYSTEM_CONFIG_PROXY_ADDRESS"
+            sed_inplace "s/SYSTEM_CONFIG_PROXY_ADDRESS=.*/SYSTEM_CONFIG_PROXY_ADDRESS=$SYSTEM_CONFIG_PROXY_ADDRESS/" .env
+        else
+            echo "⚠️  SystemConfigProxy address not found in opChainDeployments"
+        fi
+
+        if [ -n "$PROXY_ADMIN" ]; then
+            echo "✅ Found ProxyAdmin address: $PROXY_ADMIN"
+            sed_inplace "s/PROXY_ADMIN=.*/PROXY_ADMIN=$PROXY_ADMIN/" .env
+        else
+            echo "⚠️  ProxyAdmin address not found in opChainDeployments"
+        fi
+
         # Show summary
         echo "📄 Contract addresses updated in .env:"
         echo "   DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS"
         echo "   L2OO_ADDRESS=$L2OO_ADDRESS"
+        echo "   OPCM_IMPL_ADDRESS=$OPCM_IMPL_ADDRESS"
+        echo "   SYSTEM_CONFIG_PROXY_ADDRESS=$SYSTEM_CONFIG_PROXY_ADDRESS"
+        echo "   PROXY_ADMIN=$PROXY_ADMIN"
     else
         echo "❌ $STATE_JSON is not a valid JSON object"
     fi
@@ -271,3 +281,17 @@ fi
 
 echo "🎉 OP Stack deployment preparation completed!"
 
+# init op-geth
+OP_GETH_DATADIR="$(pwd)/data/op-geth"
+rm -rf "$OP_GETH_DATADIR"
+mkdir -p "$OP_GETH_DATADIR"
+docker compose run --no-deps \
+  -v "$(pwd)/$CONFIG_DIR/genesis.json:/genesis.json" \
+  op-geth \
+  --datadir "/datadir" \
+  --gcmode=archive \
+  init \
+  --state.scheme=hash \
+  /genesis.json
+
+echo "finished init op-geth"
