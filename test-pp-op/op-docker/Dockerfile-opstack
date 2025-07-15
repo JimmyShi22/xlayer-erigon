@@ -41,3 +41,7 @@ RUN make build
 
 # build op-deployer
 RUN go build -o /app/op-deployer/bin/op-deployer ./op-deployer/cmd/op-deployer
+
+WORKDIR /app/packages/contracts-bedrock
+RUN forge build
+WORKDIR /app

@@ -406,7 +406,7 @@ services:
       - --http.vhosts=*
       - --http.port=8545
       - --http.addr=0.0.0.0
-      - --http.api=web3,debug,eth,txpool,net,engine
+      - --http.api=web3,debug,eth,txpool,net,engine,miner
       - --ws
       - --ws.addr=0.0.0.0
       - --ws.port=7546
@@ -470,7 +470,7 @@ services:
       - --private-key=${OP_BATCHER_PRIVATE_KEY}
     depends_on:
       - op-node
-
+      
   op-proposer:
     image: "${OP_STACK_IMAGE_TAG}"
     container_name: op-proposer

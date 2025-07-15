@@ -35,7 +35,7 @@ cd $TMP_DIR
 
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
-    git clone -b v1.13.4 https://github.com/ethereum-optimism/optimism.git
+    git clone -b googgoog/fix-add-game-type-cli https://github.com/googgoog/optimism.git
     cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile
     cd optimism
     docker build -t op-stack:v1.13.4 .
@@ -96,23 +96,63 @@ if [ -f "$EXPORT_DIR/prestate-proof-mt64.json.gz" ]; then
     fi
 fi
 
-# echo "🔧 Initializing op-deployer to generate intent.toml and state.json..."
+echo "🔧 Bootstrapping superchain with op-deployer..."
 
-# docker run \
-#   --network "$DOCKER_NETWORK" \
-#   -v "$(pwd)/$CONFIG_DIR:/deployments" \
-#   -w /app \
-#   "${OP_STACK_IMAGE_TAG}" \
-#   bash -c "
-#     /app/op-deployer/bin/op-deployer init \
-#       --l1-chain-id 1337 \
-#       --l2-chain-ids "195" \
-#       --outdir /deployments \
-#       --intent-type custom \
-#   "
+docker run \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app \
+  "${OP_STACK_IMAGE_TAG}" \
+  bash -c "
+    set -e
+    /app/op-deployer/bin/op-deployer bootstrap superchain \
+      --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
+      --private-key $DEPLOYER_PRIVATE_KEY \
+      --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
+      --superchain-proxy-admin-owner $ADMIN_OWNER_ADDRESS \
+      --protocol-versions-owner $ADMIN_OWNER_ADDRESS \
+      --guardian $ADMIN_OWNER_ADDRESS \
+      --outfile /deployments/superchain.json
+  "
+
+echo "🔧 Bootstrapping implementations with op-deployer..."
+
+SUPERCHAIN_JSON="$CONFIG_DIR/superchain.json"
+PROTOCOL_VERSIONS_PROXY=$(jq -r '.protocolVersionsProxyAddress' "$SUPERCHAIN_JSON")
+SUPERCHAIN_CONFIG_PROXY=$(jq -r '.superchainConfigProxyAddress' "$SUPERCHAIN_JSON")
+
+docker run \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app \
+  "${OP_STACK_IMAGE_TAG}" \
+  bash -c "
+    set -e
+    /app/op-deployer/bin/op-deployer bootstrap implementations \
+      --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
+      --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
+      --outfile /deployments/implementations.json \
+      --mips-version "7" \
+      --private-key $DEPLOYER_PRIVATE_KEY \
+      --protocol-versions-proxy $PROTOCOL_VERSIONS_PROXY \
+      --superchain-config-proxy $SUPERCHAIN_CONFIG_PROXY \
+      --superchain-proxy-admin $ADMIN_OWNER_ADDRESS \
+      --upgrade-controller $ADMIN_OWNER_ADDRESS
+  "
 
 cp ./config-op/intent.toml.bak ./config-op/intent.toml
 cp ./config-op/state.json.bak ./config-op/state.json
+
+# Read opcmAddress from implementations.json and write it into intent.toml
+OPCM_ADDRESS=$(jq -r '.opcmAddress' ./config-op/implementations.json)
+if [ -z "$OPCM_ADDRESS" ] || [ "$OPCM_ADDRESS" = "null" ]; then
+  echo "❌ Failed to read opcmAddress from implementations.json"
+  exit 1
+fi
+
+# Replace the opcmAddress field in intent.toml with the new value
+sed_inplace "s/^opcmAddress = \".*\"/opcmAddress = \"$OPCM_ADDRESS\"/" ./config-op/intent.toml
+echo "✅ Updated opcmAddress ($OPCM_ADDRESS) in intent.toml"
 
 # deploy contracts, TODO, should we need to modify source code to deploy contracts?
 docker run \
@@ -173,4 +213,46 @@ docker compose run --no-deps \
   /genesis.json
 
 echo "finished init op-geth"
+
+# Extract contract addresses from state.json and update .env file
+echo "🔧 Extracting contract addresses from state.json..."
+STATE_JSON="$PWD_DIR/config-op/state.json"
+
+if [ -f "$STATE_JSON" ]; then
+    # Extract DisputeGameFactoryProxy address
+    DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.DisputeGameFactoryProxy' "$STATE_JSON" 2>/dev/null || echo "")
+    if [ -n "$DISPUTE_GAME_FACTORY_ADDRESS" ] && [ "$DISPUTE_GAME_FACTORY_ADDRESS" != "null" ]; then
+        echo "✅ Found DisputeGameFactoryProxy address: $DISPUTE_GAME_FACTORY_ADDRESS"
+        sed_inplace "s/DISPUTE_GAME_FACTORY_ADDRESS=.*/DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS/" .env
+    else
+        echo "⚠️  DisputeGameFactoryProxy address not found in state.json"
+    fi
+
+    # Extract L2OutputOracleProxy address
+    L2OO_ADDRESS=$(jq -r '.L2OutputOracleProxy' "$STATE_JSON" 2>/dev/null || echo "")
+    if [ -n "$L2OO_ADDRESS" ] && [ "$L2OO_ADDRESS" != "null" ]; then
+        echo "✅ Found L2OutputOracleProxy address: $L2OO_ADDRESS"
+        sed_inplace "s/L2OO_ADDRESS=.*/L2OO_ADDRESS=$L2OO_ADDRESS/" .env
+    else
+        echo "⚠️  L2OutputOracleProxy address not found in state.json"
+    fi
+
+    # Show summary
+    echo "📄 Contract addresses updated in .env:"
+    echo "   DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS"
+    echo "   L2OO_ADDRESS=$L2OO_ADDRESS"
+else
+    echo "❌ state.json not found at $STATE_JSON"
+fi
+
+echo "🎉 OP Stack deployment preparation completed!"
+echo "📁 Generated files:"
+echo "   - config-op/genesis.json (for op-geth)"
+echo "   - config-op/rollup.json (for op-node)" 
+echo "   - config-op/state.json (contract addresses)"
+echo "   - data/cannon-data/prestate-proof-mt64.json.gz"
+echo "   - data/cannon-data/op-program"
+echo ""
+echo "🚀 You can now start the OP Stack services with:"
+echo "   ./3-op-start-service.sh"
 

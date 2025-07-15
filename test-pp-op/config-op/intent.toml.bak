@@ -1,13 +1,9 @@
-configType = "custom"
+configType = "standard-overrides"
 l1ChainID = 1337
 fundDevAccounts = true
-l1ContractsLocator = "tag://op-contracts/v4.0.0-rc.7"
-l2ContractsLocator = "tag://op-contracts/v4.0.0-rc.7"
-
-[superchainRoles]
-  SuperchainProxyAdminOwner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-  SuperchainGuardian = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-  ProtocolVersionsOwner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+opcmAddress = "0x0000000000000000000000000000000000000000"
+l1ContractsLocator = "file:///app/packages/contracts-bedrock/forge-artifacts"
+l2ContractsLocator = "file:///app/packages/contracts-bedrock/forge-artifacts"
 
 [[chains]]
   id = "0x00000000000000000000000000000000000000000000000000000000000000c3"
