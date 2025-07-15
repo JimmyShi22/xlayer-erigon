@@ -35,10 +35,10 @@ cd $TMP_DIR
 
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
-    git clone -b v1.9.3 https://github.com/ethereum-optimism/optimism.git
+    git clone -b v1.13.4 https://github.com/ethereum-optimism/optimism.git
     cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile
     cd optimism
-    docker build -t op-stack:v1.9.3 .
+    docker build -t op-stack:v1.13.4 .
     cd ..
 fi
 
@@ -60,25 +60,25 @@ EXPORT_DIR="$PWD_DIR/data/cannon-data"
 mkdir -p $EXPORT_DIR
 
 echo "Checking prestate consistency before contract deployment..."
-if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
+if [ ! -f "$EXPORT_DIR/prestate-proof-mt64.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
     echo "Extracting prestate files from Docker image..."
     TEMP_CONTAINER="temp-prestate-extract"
     docker create --name "$TEMP_CONTAINER" "$OP_STACK_IMAGE_TAG"
     
     docker cp "$TEMP_CONTAINER":/app/op-program/bin/op-program "$EXPORT_DIR/op-program" || echo "Warning: Could not copy op-program"
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate.json "$EXPORT_DIR/prestate.json" || echo "Warning: Could not copy prestate.json"
+    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate-proof-mt64.json "$EXPORT_DIR/prestate-proof-mt64.json" || echo "Warning: Could not copy prestate-proof-mt64.json"
     
     docker rm -f "$TEMP_CONTAINER"
     
-    if [ -f "$EXPORT_DIR/prestate.json" ]; then
-        gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
-        echo "✅ Created prestate.json.gz"
+    if [ -f "$EXPORT_DIR/prestate-proof-mt64.json" ]; then
+        gzip -c "$EXPORT_DIR/prestate-proof-mt64.json" > "$EXPORT_DIR/prestate-proof-mt64.json.gz"
+        echo "✅ Created prestate-proof-mt64.json.gz"
     fi
 fi
 
 # Verify and update prestate hash in devnetL1.json
-if [ -f "$EXPORT_DIR/prestate.json.gz" ]; then
-    ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
+if [ -f "$EXPORT_DIR/prestate-proof-mt64.json.gz" ]; then
+    ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate-proof-mt64.json.gz" | awk '{print $1}')
     DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
     
     if [ -f "$DEVNET_L1_JSON" ]; then
@@ -96,23 +96,54 @@ if [ -f "$EXPORT_DIR/prestate.json.gz" ]; then
     fi
 fi
 
+# echo "🔧 Initializing op-deployer to generate intent.toml and state.json..."
+
+# docker run \
+#   --network "$DOCKER_NETWORK" \
+#   -v "$(pwd)/$CONFIG_DIR:/deployments" \
+#   -w /app \
+#   "${OP_STACK_IMAGE_TAG}" \
+#   bash -c "
+#     /app/op-deployer/bin/op-deployer init \
+#       --l1-chain-id 1337 \
+#       --l2-chain-ids "195" \
+#       --outdir /deployments \
+#       --intent-type custom \
+#   "
+
+cp ./config-op/intent.toml.bak ./config-op/intent.toml
+cp ./config-op/state.json.bak ./config-op/state.json
+
 # deploy contracts, TODO, should we need to modify source code to deploy contracts?
 docker run \
   --network "$DOCKER_NETWORK" \
-  -v "$(pwd)/$CONFIG_DIR:/app/packages/contracts-bedrock/deployments" \
-  -w /app/packages/contracts-bedrock \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app \
   "${OP_STACK_IMAGE_TAG}" \
-  bash -c "yes | DEPLOYMENT_OUTFILE=deployments/artifact.json DEPLOY_CONFIG_PATH=deployments/devnetL1.json forge script -vvv scripts/deploy/Deploy.s.sol:Deploy \
-      --rpc-url $L1_RPC_URL_IN_DOCKER \
-      --broadcast --private-key $DEPLOYER_PRIVATE_KEY --non-interactive && \
-      FORK=latest STATE_DUMP_PATH=deployments/state_dump.json DEPLOY_CONFIG_PATH=deployments/devnetL1.json CONTRACT_ADDRESSES_PATH=deployments/artifact.json forge script scripts/L2Genesis.s.sol:L2Genesis --sig 'runWithStateDump()' &&\
-      go run ../../op-node/cmd/main.go genesis l2 \
-      --deploy-config=deployments/devnetL1.json \
-      --l1-deployments=deployments/artifact.json \
-      --l2-allocs=deployments/state_dump.json \
-      --outfile.l2=deployments/genesis.json \
-      --outfile.rollup=deployments/rollup.json \
-      --l1-rpc=$L1_RPC_URL_IN_DOCKER"
+  bash -c "
+    set -e
+    echo '🔧 Starting contract deployment with op-deployer...'
+
+    # Deploy using op-deployer, wait for completion before proceeding
+    /app/op-deployer/bin/op-deployer apply \
+      --workdir /deployments \
+      --private-key $DEPLOYER_PRIVATE_KEY \
+      --l1-rpc-url $L1_RPC_URL_IN_DOCKER
+
+    echo '📄 Generating L2 genesis and rollup config...'
+
+    # Generate L2 genesis using op-deployer
+    /app/op-deployer/bin/op-deployer inspect genesis \
+      --workdir /deployments \
+      195 > /deployments/genesis.json
+
+    # Generate L2 rollup using op-node
+    /app/op-deployer/bin/op-deployer inspect rollup \
+      --workdir /deployments \
+      195 > /deployments/rollup.json
+
+    echo '✅ Contract deployment completed successfully'
+  "
 
 echo "genesis.json and rollup.json are generated in deployments folder"
 
@@ -143,81 +174,3 @@ docker compose run --no-deps \
 
 echo "finished init op-geth"
 
-if ! command -v jq &> /dev/null; then
-    echo "Warning: 'jq' is not installed. The op-proposer service will fail if you try to run it."
-    echo "Please install jq (e.g., 'sudo apt-get install jq' or 'brew install jq')."
-else
-    # Get L2OutputOracleProxy address and update .env file
-    L2OO_ADDRESS=$(jq -r .L2OutputOracleProxy "$(pwd)/$CONFIG_DIR/artifact.json")
-    if [ -z "$L2OO_ADDRESS" ] || [ "$L2OO_ADDRESS" == "null" ]; then
-        echo "Warning: L2OutputOracleProxy address not found in $CONFIG_DIR/artifact.json. op-proposer will fail if started."
-    else
-        echo "L2OutputOracleProxy address set for op-proposer: $L2OO_ADDRESS"
-        sed_inplace "s/L2OO_ADDRESS=.*/L2OO_ADDRESS=$L2OO_ADDRESS/" .env
-        export L2OO_ADDRESS
-    fi
-
-    DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r .DisputeGameFactoryProxy "$(pwd)/$CONFIG_DIR/artifact.json")
-    if [ -z "$DISPUTE_GAME_FACTORY_ADDRESS" ] || [ "$DISPUTE_GAME_FACTORY_ADDRESS" == "null" ]; then
-        echo "Warning: DisputeGameFactoryProxy address not found in $CONFIG_DIR/artifact.json. op-proposer will fail if started."
-    else
-        echo "DisputeGameFactoryProxy address set for op-proposer: $DISPUTE_GAME_FACTORY_ADDRESS"
-        sed_inplace "s/DISPUTE_GAME_FACTORY_ADDRESS=.*/DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS/" .env
-        export DISPUTE_GAME_FACTORY_ADDRESS
-    fi
-fi
-
-source .env
-
-
-# Calculate and update faultGameGenesisOutputRoot
-echo "🔍 Calculating faultGameGenesisOutputRoot..."
-GENESIS_OUTPUT_ROOT=$(docker run \
-  --network "$DOCKER_NETWORK" \
-  -v "$(pwd)/$CONFIG_DIR:/app/packages/contracts-bedrock/deployments" \
-  -w /app/packages/contracts-bedrock \
-  "${OP_STACK_IMAGE_TAG}" \
-  bash -c "go run ../../op-node/cmd/main.go genesis output-root \
-      --l2-genesis-path=deployments/genesis.json \
-      --rollup-config=deployments/rollup.json" | tr -d '\n')
-
-if [ -n "$GENESIS_OUTPUT_ROOT" ] && [ "$GENESIS_OUTPUT_ROOT" != "null" ]; then
-    echo "✅ Calculated genesis output root: $GENESIS_OUTPUT_ROOT"
-    
-    # Update devnetL1.json with the correct genesis output root
-    DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
-    if [ -f "$DEVNET_L1_JSON" ]; then
-        CURRENT_ROOT=$(jq -r '.faultGameGenesisOutputRoot' "$DEVNET_L1_JSON")
-        if [ "$CURRENT_ROOT" != "$GENESIS_OUTPUT_ROOT" ]; then
-            echo "🔄 Updating faultGameGenesisOutputRoot in devnetL1.json"
-            echo "   Old: $CURRENT_ROOT"
-            echo "   New: $GENESIS_OUTPUT_ROOT"
-            
-            jq --arg root "$GENESIS_OUTPUT_ROOT" '.faultGameGenesisOutputRoot = $root' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
-            echo "✅ Updated faultGameGenesisOutputRoot for next deployment"
-        else
-            echo "✅ faultGameGenesisOutputRoot is already correct"
-        fi
-    fi
-else
-    echo "⚠️  Failed to calculate genesis output root, will use placeholder"
-fi
-
-
-cd $PWD_DIR
-
-# Final check and ensure all prestate files are ready
-echo "=== Final prestate files check ==="
-if [ -f "$EXPORT_DIR/prestate.json.gz" ] && [ -f "$EXPORT_DIR/op-program" ]; then
-    echo "✅ All prestate files are ready for op-challenger:"
-    echo "   - op-program: $(ls -lh $EXPORT_DIR/op-program | awk '{print $5}')"
-    echo "   - prestate.json.gz: $(ls -lh $EXPORT_DIR/prestate.json.gz | awk '{print $5}')"
-    
-    # Verify hash one more time
-    FINAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
-    echo "   - prestate hash: 0x$FINAL_HASH"
-else
-    echo "⚠️  Missing prestate files - op-challenger may fail to start"
-fi
-
-echo "✅ Cannon prestate files prepared successfully"

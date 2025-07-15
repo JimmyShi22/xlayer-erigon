@@ -31,10 +31,13 @@ RUN make op-program
 RUN make cannon
 
 # Generate prestate files
-RUN make cannon-prestate || echo "cannon-prestate failed, trying alternative approach"
+RUN make cannon-prestates || echo "cannon-prestates failed, trying alternative approach"
 
 # build op-challenger
 RUN make op-challenger
 
 # Build everything else
 RUN make build
+
+# build op-deployer
+RUN go build -o /app/op-deployer/bin/op-deployer ./op-deployer/cmd/op-deployer
