@@ -220,28 +220,51 @@ echo "🔧 Extracting contract addresses from state.json..."
 STATE_JSON="$PWD_DIR/config-op/state.json"
 
 if [ -f "$STATE_JSON" ]; then
-    # Extract DisputeGameFactoryProxy address
-    DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.DisputeGameFactoryProxy' "$STATE_JSON" 2>/dev/null || echo "")
-    if [ -n "$DISPUTE_GAME_FACTORY_ADDRESS" ] && [ "$DISPUTE_GAME_FACTORY_ADDRESS" != "null" ]; then
-        echo "✅ Found DisputeGameFactoryProxy address: $DISPUTE_GAME_FACTORY_ADDRESS"
-        sed_inplace "s/DISPUTE_GAME_FACTORY_ADDRESS=.*/DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS/" .env
-    else
-        echo "⚠️  DisputeGameFactoryProxy address not found in state.json"
-    fi
+    # Extract contract addresses from state.json
+    # The error "Cannot index array with string" means .opChainDeployments is probably an array, not an object.
+    # Try to handle both array and object cases.
 
-    # Extract L2OutputOracleProxy address
-    L2OO_ADDRESS=$(jq -r '.L2OutputOracleProxy' "$STATE_JSON" 2>/dev/null || echo "")
-    if [ -n "$L2OO_ADDRESS" ] && [ "$L2OO_ADDRESS" != "null" ]; then
-        echo "✅ Found L2OutputOracleProxy address: $L2OO_ADDRESS"
-        sed_inplace "s/L2OO_ADDRESS=.*/L2OO_ADDRESS=$L2OO_ADDRESS/" .env
-    else
-        echo "⚠️  L2OutputOracleProxy address not found in state.json"
-    fi
+    # Try to get opChainDeployments as an object
+    DEPLOYMENTS_TYPE=$(jq -r 'type' "$STATE_JSON")
+    if [ "$DEPLOYMENTS_TYPE" = "object" ]; then
+        # Try to get opChainDeployments as an object or array
+        OPCD_TYPE=$(jq -r '.opChainDeployments | type' "$STATE_JSON" 2>/dev/null)
+        if [ "$OPCD_TYPE" = "object" ]; then
+            # Normal case: opChainDeployments is an object
+            DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.opChainDeployments.DisputeGameFactoryProxy // empty' "$STATE_JSON")
+            L2OO_ADDRESS=$(jq -r '.opChainDeployments.L2OutputOracleProxy // empty' "$STATE_JSON")
+        elif [ "$OPCD_TYPE" = "array" ]; then
+            # If it's an array, try to get the first element
+            DISPUTE_GAME_FACTORY_ADDRESS=$(jq -r '.opChainDeployments[0].DisputeGameFactoryProxy // empty' "$STATE_JSON")
+            L2OO_ADDRESS=$(jq -r '.opChainDeployments[0].L2OutputOracleProxy // empty' "$STATE_JSON")
+        else
+            # Not found
+            DISPUTE_GAME_FACTORY_ADDRESS=""
+            L2OO_ADDRESS=""
+        fi
 
-    # Show summary
-    echo "📄 Contract addresses updated in .env:"
-    echo "   DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS"
-    echo "   L2OO_ADDRESS=$L2OO_ADDRESS"
+        # Update .env if found
+        if [ -n "$DISPUTE_GAME_FACTORY_ADDRESS" ]; then
+            echo "✅ Found DisputeGameFactoryProxy address: $DISPUTE_GAME_FACTORY_ADDRESS"
+            sed_inplace "s/DISPUTE_GAME_FACTORY_ADDRESS=.*/DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS/" .env
+        else
+            echo "⚠️  DisputeGameFactoryProxy address not found in opChainDeployments"
+        fi
+
+        if [ -n "$L2OO_ADDRESS" ]; then
+            echo "✅ Found L2OutputOracleProxy address: $L2OO_ADDRESS"
+            sed_inplace "s/L2OO_ADDRESS=.*/L2OO_ADDRESS=$L2OO_ADDRESS/" .env
+        else
+            echo "⚠️  L2OutputOracleProxy address not found in opChainDeployments"
+        fi
+
+        # Show summary
+        echo "📄 Contract addresses updated in .env:"
+        echo "   DISPUTE_GAME_FACTORY_ADDRESS=$DISPUTE_GAME_FACTORY_ADDRESS"
+        echo "   L2OO_ADDRESS=$L2OO_ADDRESS"
+    else
+        echo "❌ $STATE_JSON is not a valid JSON object"
+    fi
 else
     echo "❌ state.json not found at $STATE_JSON"
 fi
