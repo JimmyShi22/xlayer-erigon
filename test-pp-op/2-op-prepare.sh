@@ -120,6 +120,7 @@ echo "🔧 Bootstrapping implementations with op-deployer..."
 SUPERCHAIN_JSON="$CONFIG_DIR/superchain.json"
 PROTOCOL_VERSIONS_PROXY=$(jq -r '.protocolVersionsProxyAddress' "$SUPERCHAIN_JSON")
 SUPERCHAIN_CONFIG_PROXY=$(jq -r '.superchainConfigProxyAddress' "$SUPERCHAIN_JSON")
+PROXY_ADMIN=$(jq -r '.proxyAdminAddress' "$SUPERCHAIN_JSON")
 
 docker run \
   --network "$DOCKER_NETWORK" \
@@ -136,7 +137,7 @@ docker run \
       --private-key $DEPLOYER_PRIVATE_KEY \
       --protocol-versions-proxy $PROTOCOL_VERSIONS_PROXY \
       --superchain-config-proxy $SUPERCHAIN_CONFIG_PROXY \
-      --superchain-proxy-admin $ADMIN_OWNER_ADDRESS \
+      --superchain-proxy-admin $PROXY_ADMIN \
       --upgrade-controller $ADMIN_OWNER_ADDRESS
   "
 
@@ -246,13 +247,4 @@ else
 fi
 
 echo "🎉 OP Stack deployment preparation completed!"
-echo "📁 Generated files:"
-echo "   - config-op/genesis.json (for op-geth)"
-echo "   - config-op/rollup.json (for op-node)" 
-echo "   - config-op/state.json (contract addresses)"
-echo "   - data/cannon-data/prestate-proof-mt64.json.gz"
-echo "   - data/cannon-data/op-program"
-echo ""
-echo "🚀 You can now start the OP Stack services with:"
-echo "   ./3-op-start-service.sh"
 
