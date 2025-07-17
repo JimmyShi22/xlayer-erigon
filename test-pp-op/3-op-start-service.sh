@@ -22,7 +22,7 @@ if echo "$LOG_OUTPUT" | grep -q "expected L2 genesis hash to match L2 block at g
     if [ -n "$CORRECT_HASH" ]; then
         echo "Fixing genesis hash: $CORRECT_HASH"
         sed_inplace '/\"l2\":/,/}/ s/\"hash\": \"0x[a-fA-F0-9]*\"/\"hash\": \"'$CORRECT_HASH'\"/' ./config-op/rollup.json
-        docker compose restart op-node op-proposer
+        docker compose restart op-node
     fi
 fi
 
@@ -95,33 +95,74 @@ MAX_GAME_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxGameDepth()
 SPLIT_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "splitDepth()")
 CLOCK_EXTENSION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "clockExtension()")
 MAX_CLOCK_DURATION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxClockDuration()")
-VM=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "vm()")
+VM_RAW=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "vm()")
+VM="0x${VM_RAW: -40}"
 ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
 L2_CHAIN_ID=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "l2ChainId()")
 
-docker run \
-    --network "$DOCKER_NETWORK" \
-    -v "$(pwd)/$CONFIG_DIR:/deployments" \
-    -w /app \
-    "${OP_STACK_IMAGE_TAG}" \
-    bash -c "
+
+docker run --rm \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app/packages/contracts-bedrock/scripts/deploy \
+  "${OP_STACK_IMAGE_TAG}" \
+  bash -c "
     set -e
-    /app/op-deployer/bin/op-deployer manage add-game-type \
-        --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
-        --dispute-max-game-depth $MAX_GAME_DEPTH \
-        --dispute-split-depth $SPLIT_DEPTH \
-        --dispute-clock-extension $CLOCK_EXTENSION \
-        --dispute-max-clock-duration $MAX_CLOCK_DURATION \
-        --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
-        --vm-address $VM \
-        --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
-        --opcm-impl-address $OPCM_IMPL_ADDRESS \
-        --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
-        --op-chain-proxy-admin-address $PROXY_ADMIN \
-        --dispute-game-type 0 \
-        --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
-        --permissionless \
-    "
-echo "add-game-type completed"
+    
+    echo '🚀 Executing AddGameType script...'
+    forge script AddGameType.s.sol:AddGameType \
+      --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
+      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,0,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,false,\"123\")' \
+      --broadcast \
+      --private-key $DEPLOYER_PRIVATE_KEY \
+      --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
+    
+    echo '📋 Gathering contract addresses and generating calldata...'
+    DISPUTE_GAME_FACTORY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'disputeGameFactory()(address)')
+    OPTIMISM_PORTAL_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'optimismPortal()(address)')
+    echo 'disputeGameFactory: '\$DISPUTE_GAME_FACTORY_ADDR
+    echo 'optimismPortal: '\$OPTIMISM_PORTAL_ADDR
+    
+    # Get anchorStateRegistry address with proper return type specification
+    ANCHOR_STATE_REGISTRY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$OPTIMISM_PORTAL_ADDR 'anchorStateRegistry()(address)')
+    echo 'anchorStateRegistry: '\$ANCHOR_STATE_REGISTRY_ADDR
+    
+    GAME_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$DISPUTE_GAME_FACTORY_ADDR 'gameImpls(uint32)(address)' 0)
+    echo 'gameImpls(0): '\$GAME_ADDR
+    
+    cast send \$ANCHOR_STATE_REGISTRY_ADDR 'setRespectedGameType(uint32)' 0 --rpc-url $L1_RPC_URL_IN_DOCKER --private-key $DEPLOYER_PRIVATE_KEY
+
+    echo '✅ AddGameType operations completed successfully'
+  "
+
+# docker run \
+#     --network "$DOCKER_NETWORK" \
+#     -v "$(pwd)/$CONFIG_DIR:/deployments" \
+#     -w /app \
+#     "${OP_STACK_IMAGE_TAG}" \
+#     bash -c "
+#     set -e
+#     /app/op-deployer/bin/op-deployer manage add-game-type \
+#         --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
+#         --dispute-max-game-depth $MAX_GAME_DEPTH \
+#         --dispute-split-depth $SPLIT_DEPTH \
+#         --dispute-clock-extension $CLOCK_EXTENSION \
+#         --dispute-max-clock-duration $MAX_CLOCK_DURATION \
+#         --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
+#         --vm-address $VM \
+#         --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
+#         --opcm-impl-address $OPCM_IMPL_ADDRESS \
+#         --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
+#         --op-chain-proxy-admin-address $PROXY_ADMIN \
+#         --dispute-game-type 0 \
+#         --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
+#         --salt-mixer “123” \
+#         --log.level debug \
+#         --log.color true \
+#         --permissionless \
+#     " 2>&1 | tee add-game-type.log
+# echo "add-game-type completed"
+
+docker compose up -d op-proposer
 
 docker compose up -d op-challenger

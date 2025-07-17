@@ -523,7 +523,7 @@ services:
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
       - --cannon-bin=/app/cannon/bin/cannon
       - --cannon-server=/data/op-program
-      - --cannon-prestate=/data/prestate.json
+      - --cannon-prestate=/app/op-program/bin/prestate-mt64.bin.gz
       - --cannon-rollup-config=/rollup.json
       - --cannon-l2-genesis=/l2-genesis.json
       - --private-key=${OP_CHALLENGER_PRIVATE_KEY}
