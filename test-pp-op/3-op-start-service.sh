@@ -89,12 +89,11 @@ PERMISSIONED_GAME_RAW=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRE
 # Convert 32-byte hex to 20-byte address (last 40 hex chars, with 0x prefix)
 PERMISSIONED_GAME="0x${PERMISSIONED_GAME_RAW: -40}"
 
-# Retrieve parameters from existing permissioned game
-ABSOLUTE_PRESTATE=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "absolutePrestate()")
+# Get prestate value from prestate-proof-mt64.json
+docker cp op-node:/app/op-program/bin/prestate-proof-mt64.json "$EXPORT_DIR/prestate-proof-mt64.json"
+ABSOLUTE_PRESTATE=$(jq -r '.pre' "$EXPORT_DIR/prestate-proof-mt64.json")
 MAX_GAME_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxGameDepth()")
 SPLIT_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "splitDepth()")
-CLOCK_EXTENSION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "clockExtension()")
-MAX_CLOCK_DURATION=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxClockDuration()")
 VM_RAW=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "vm()")
 VM="0x${VM_RAW: -40}"
 ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
@@ -108,7 +107,10 @@ docker run --rm \
   "${OP_STACK_IMAGE_TAG}" \
   bash -c "
     set -e
-    
+
+    # Get ABSOLUTE_PRESTATE from prestate-proof-mt64.json
+    ABSOLUTE_PRESTATE=$(jq -r '.prestate' /app/op-program/bin/prestate-proof-mt64.json)
+
     echo '🚀 Executing AddGameType script...'
     forge script AddGameType.s.sol:AddGameType \
       --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
@@ -165,4 +167,84 @@ docker run --rm \
 
 docker compose up -d op-proposer
 
-docker compose up -d op-challenger
+echo "Waiting for op-proposer to create a game..."
+GAME_CREATED=false
+MAX_WAIT_TIME=600  # 10 minutes timeout
+WAIT_COUNT=0
+
+while [ "$GAME_CREATED" = false ] && [ $WAIT_COUNT -lt $MAX_WAIT_TIME ]; do
+    # Check if a game was created by op-proposer
+    GAME_COUNT=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRESS "gameCount()(uint256)")
+    if [ "$GAME_COUNT" -gt 0 ]; then
+        echo "✅ Game created! Game count: $GAME_COUNT"
+        GAME_CREATED=true
+    else
+        echo "⏳ Waiting for game creation... ($WAIT_COUNT/$MAX_WAIT_TIME seconds)"
+        sleep 1
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+    fi
+done
+
+if [ "$GAME_CREATED" = false ]; then
+    echo "❌ Timeout waiting for game creation"
+    exit 1
+fi
+
+echo "🛑 Stopping op-proposer..."
+docker compose stop op-proposer
+
+echo "⏰ Sleeping for MAX_CLOCK_DURATION ($MAX_CLOCK_DURATION seconds)..."
+sleep $MAX_CLOCK_DURATION
+
+echo "🔧 Executing dispute resolution sequence using op-challenger..."
+
+# Get the latest game address
+LATEST_GAME_INDEX=$((GAME_COUNT - 1))
+GAME_INFO=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRESS "gameAtIndex(uint256)(uint256,uint256,address)" $LATEST_GAME_INDEX)
+# Extract the third value (address) from the returned tuple - address is the last 40 hex chars
+GAME_ADDRESS="0x${GAME_INFO: -40}"
+
+echo "Latest game address: $GAME_ADDRESS"
+
+# Execute the dispute resolution sequence using op-challenger commands
+echo "1. Resolving claim (0,0) using op-challenger..."
+docker run --rm \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/data/cannon-data:/data" \
+  -v "$(pwd)/config-op/rollup.json:/rollup.json" \
+  -v "$(pwd)/config-op/genesis.json:/l2-genesis.json" \
+  "${OP_STACK_IMAGE_TAG}" \
+  /app/op-challenger/bin/op-challenger resolve-claim \
+    --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER} \
+    --private-key=${OP_CHALLENGER_PRIVATE_KEY} \
+    --game-address=$GAME_ADDRESS \
+    --claim=0
+
+echo "2. Resolving game using op-challenger..."
+docker run --rm \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/data/cannon-data:/data" \
+  -v "$(pwd)/config-op/rollup.json:/rollup.json" \
+  -v "$(pwd)/config-op/genesis.json:/l2-genesis.json" \
+  "${OP_STACK_IMAGE_TAG}" \
+  /app/op-challenger/bin/op-challenger resolve \
+    --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER} \
+    --private-key=${OP_CHALLENGER_PRIVATE_KEY} \
+    --game-address=$GAME_ADDRESS
+
+sleep $DISPUTE_GAME_FINALITY_DELAY_SECONDS
+
+echo "3. Claiming credit for proposer using cast command..."
+docker run --rm \
+  --network "$DOCKER_NETWORK" \
+  "${OP_STACK_IMAGE_TAG}" \
+  cast send \
+    --rpc-url ${L1_RPC_URL_IN_DOCKER} \
+    --private-key ${OP_CHALLENGER_PRIVATE_KEY} \
+    $GAME_ADDRESS \
+    "claimCredit(address)" \
+    $PROPOSER_ADDRESS
+
+echo "✅ Dispute resolution sequence completed using op-challenger commands!"
+
+docker compose up op-proposer op-challenger

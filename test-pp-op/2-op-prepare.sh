@@ -138,7 +138,10 @@ docker run \
       --protocol-versions-proxy $PROTOCOL_VERSIONS_PROXY \
       --superchain-config-proxy $SUPERCHAIN_CONFIG_PROXY \
       --superchain-proxy-admin $PROXY_ADMIN \
-      --upgrade-controller $ADMIN_OWNER_ADDRESS
+      --upgrade-controller $ADMIN_OWNER_ADDRESS \
+      --challenge-period-seconds $CHALLENGE_PERIOD_SECONDS \
+      --withdrawal-delay-seconds $WITHDRAWAL_DELAY_SECONDS \
+      --dispute-game-finality-delay-seconds $DISPUTE_GAME_FINALITY_DELAY_SECONDS
   "
 
 cp ./config-op/intent.toml.bak ./config-op/intent.toml
