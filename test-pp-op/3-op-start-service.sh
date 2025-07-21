@@ -99,7 +99,6 @@ VM="0x${VM_RAW: -40}"
 ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
 L2_CHAIN_ID=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "l2ChainId()")
 
-
 docker run --rm \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
@@ -112,59 +111,46 @@ docker run --rm \
     ABSOLUTE_PRESTATE=$(jq -r '.prestate' /app/op-program/bin/prestate-proof-mt64.json)
 
     echo '🚀 Executing AddGameType script...'
+
     forge script AddGameType.s.sol:AddGameType \
       --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
-      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,0,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,false,\"123\")' \
+      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,1,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,true,\"123\")' \
       --broadcast \
       --private-key $DEPLOYER_PRIVATE_KEY \
       --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
-    
-    echo '📋 Gathering contract addresses and generating calldata...'
-    DISPUTE_GAME_FACTORY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'disputeGameFactory()(address)')
-    OPTIMISM_PORTAL_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'optimismPortal()(address)')
-    echo 'disputeGameFactory: '\$DISPUTE_GAME_FACTORY_ADDR
-    echo 'optimismPortal: '\$OPTIMISM_PORTAL_ADDR
-    
-    # Get anchorStateRegistry address with proper return type specification
-    ANCHOR_STATE_REGISTRY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$OPTIMISM_PORTAL_ADDR 'anchorStateRegistry()(address)')
-    echo 'anchorStateRegistry: '\$ANCHOR_STATE_REGISTRY_ADDR
-    
-    GAME_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$DISPUTE_GAME_FACTORY_ADDR 'gameImpls(uint32)(address)' 0)
-    echo 'gameImpls(0): '\$GAME_ADDR
-    
-    cast send \$ANCHOR_STATE_REGISTRY_ADDR 'setRespectedGameType(uint32)' 0 --rpc-url $L1_RPC_URL_IN_DOCKER --private-key $DEPLOYER_PRIVATE_KEY
 
     echo '✅ AddGameType operations completed successfully'
   "
 
-# docker run \
-#     --network "$DOCKER_NETWORK" \
-#     -v "$(pwd)/$CONFIG_DIR:/deployments" \
-#     -w /app \
-#     "${OP_STACK_IMAGE_TAG}" \
-#     bash -c "
-#     set -e
-#     /app/op-deployer/bin/op-deployer manage add-game-type \
-#         --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
-#         --dispute-max-game-depth $MAX_GAME_DEPTH \
-#         --dispute-split-depth $SPLIT_DEPTH \
-#         --dispute-clock-extension $CLOCK_EXTENSION \
-#         --dispute-max-clock-duration $MAX_CLOCK_DURATION \
-#         --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
-#         --vm-address $VM \
-#         --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
-#         --opcm-impl-address $OPCM_IMPL_ADDRESS \
-#         --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
-#         --op-chain-proxy-admin-address $PROXY_ADMIN \
-#         --dispute-game-type 0 \
-#         --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
-#         --salt-mixer “123” \
-#         --log.level debug \
-#         --log.color true \
-#         --permissionless \
-#     " 2>&1 | tee add-game-type.log
-# echo "add-game-type completed"
+docker run \
+    --network "$DOCKER_NETWORK" \
+    -v "$(pwd)/$CONFIG_DIR:/deployments" \
+    -w /app \
+    "${OP_STACK_IMAGE_TAG}" \
+    bash -c "
+    set -e
+    /app/op-deployer/bin/op-deployer manage add-game-type \
+        --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
+        --dispute-max-game-depth $MAX_GAME_DEPTH \
+        --dispute-split-depth $SPLIT_DEPTH \
+        --dispute-clock-extension $CLOCK_EXTENSION \
+        --dispute-max-clock-duration $MAX_CLOCK_DURATION \
+        --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
+        --vm-address $VM \
+        --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
+        --opcm-impl-address $OPCM_IMPL_ADDRESS \
+        --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
+        --op-chain-proxy-admin-address $PROXY_ADMIN \
+        --dispute-game-type 0 \
+        --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
+        --salt-mixer “123” \
+        --log.level debug \
+        --log.color true \
+        --permissionless \
+    " 2>&1 | tee add-game-type.log
+echo "add-game-type completed"
 
+export GAME_TYPE=1
 docker compose up -d op-proposer
 
 echo "Waiting for op-proposer to create a game..."
@@ -247,4 +233,47 @@ docker run --rm \
 
 echo "✅ Dispute resolution sequence completed using op-challenger commands!"
 
-docker compose up op-proposer op-challenger
+# Retrieve existing values from chain for reference
+# Get permissioned game implementation
+PERMISSIONED_GAME_RAW=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRESS "gameImpls(uint32)" 1)
+# Convert 32-byte hex to 20-byte address (last 40 hex chars, with 0x prefix)
+PERMISSIONED_GAME="0x${PERMISSIONED_GAME_RAW: -40}"
+
+ABSOLUTE_PRESTATE=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "absolutePrestate()")
+ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
+
+docker run --rm \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app/packages/contracts-bedrock/scripts/deploy \
+  "${OP_STACK_IMAGE_TAG}" \
+  bash -c "
+    forge script AddGameType.s.sol:AddGameType \
+      --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
+      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,0,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,false,\"123\")' \
+      --broadcast \
+      --private-key $DEPLOYER_PRIVATE_KEY \
+      --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
+
+    echo '📋 Gathering contract addresses and generating calldata...'
+    DISPUTE_GAME_FACTORY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'disputeGameFactory()(address)')
+    OPTIMISM_PORTAL_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'optimismPortal()(address)')
+    echo 'disputeGameFactory: '\$DISPUTE_GAME_FACTORY_ADDR
+    echo 'optimismPortal: '\$OPTIMISM_PORTAL_ADDR
+    
+    # Get anchorStateRegistry address with proper return type specification
+    ANCHOR_STATE_REGISTRY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$OPTIMISM_PORTAL_ADDR 'anchorStateRegistry()(address)')
+    echo 'anchorStateRegistry: '\$ANCHOR_STATE_REGISTRY_ADDR
+    
+    GAME_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER \$DISPUTE_GAME_FACTORY_ADDR 'gameImpls(uint32)(address)' 0)
+    echo 'gameImpls(0): '\$GAME_ADDR
+    
+    cast send \$ANCHOR_STATE_REGISTRY_ADDR 'setRespectedGameType(uint32)' 0 --rpc-url $L1_RPC_URL_IN_DOCKER --private-key $DEPLOYER_PRIVATE_KEY
+
+    echo "✅ setRespectedGameType completed successfully"
+  "
+
+export GAME_TYPE=0
+
+sleep $GAME_WINDOW
+docker compose up -d op-proposer op-challenger

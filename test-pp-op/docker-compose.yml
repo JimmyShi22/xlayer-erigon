@@ -485,6 +485,7 @@ services:
       - --proposal-interval=12s
       - --private-key=${OP_PROPOSER_PRIVATE_KEY}
       - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
+      - --game-type=${GAME_TYPE}
     depends_on:
       - op-batcher
 
@@ -529,3 +530,4 @@ services:
       - --private-key=${OP_CHALLENGER_PRIVATE_KEY}
       - --trace-type=cannon
       - --datadir=/data
+      - --game-window=${GAME_WINDOW}s
