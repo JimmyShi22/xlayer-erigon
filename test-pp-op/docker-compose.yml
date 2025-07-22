@@ -478,14 +478,15 @@ services:
       - DISPUTE_GAME_FACTORY_ADDRESS=${DISPUTE_GAME_FACTORY_ADDRESS}
     command:
       - /app/op-proposer/bin/op-proposer
-      - --poll-interval=12s
+      - --poll-interval=2s
       - --rpc.port=8560
       - --rollup-rpc=http://op-node:9545
       - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
-      - --proposal-interval=12s
+      - --proposal-interval=1m
       - --private-key=${OP_PROPOSER_PRIVATE_KEY}
       - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
       - --game-type=${GAME_TYPE}
+      - --allow-non-finalized
     depends_on:
       - op-batcher
 
