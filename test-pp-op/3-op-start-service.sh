@@ -276,4 +276,4 @@ docker run --rm \
 export GAME_TYPE=0
 
 sleep $GAME_WINDOW
-docker compose up -d op-proposer op-challenger
+docker compose up -d op-proposer op-challenger op-dispute-mon

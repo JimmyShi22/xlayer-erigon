@@ -429,6 +429,7 @@ services:
     volumes:
       - ./config-op/rollup.json:/rollup.json
       - ./config-op/jwt.txt:/jwt.txt
+      - ./data/op-node:/data
     ports:
       - "9545:9545"
       - "7070:7070"
@@ -447,6 +448,7 @@ services:
       - --l1=${L1_RPC_URL_IN_DOCKER}
       - --l1.beacon=${L1_BEACON_URL_IN_DOCKER}
       - --l1.rpckind=standard
+      - --safedb.path=/data/safedb
     depends_on:
       - op-geth
 
@@ -532,3 +534,18 @@ services:
       - --trace-type=cannon
       - --datadir=/data
       - --game-window=${GAME_WINDOW}s
+
+  op-dispute-mon:
+    image: "${OP_STACK_IMAGE_TAG}"
+    container_name: op-dispute-mon
+    depends_on:
+      - op-challenger
+      - op-proposer
+    command:
+      - /app/op-dispute-mon/bin/op-dispute-mon
+      - --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER}
+      - --rollup-rpc=http://op-node:9545
+      - --game-factory-address=${DISPUTE_GAME_FACTORY_ADDRESS}
+      - --game-window=${GAME_WINDOW}s
+      - --honest-actors=${PROPOSER_ADDRESS}
+
