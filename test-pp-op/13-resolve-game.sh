@@ -81,7 +81,7 @@ if [ $TOTAL_CLAIM_COUNT -gt 0 ]; then
         echo "🎯 Resolving claim at index $claim_index (_numToResolve=10)..."
         
         # Call resolveClaim with _numToResolve=10
-        if docker run --rm \
+        resolve_output=$(docker run --rm \
             --network "$DOCKER_NETWORK" \
             "${OP_STACK_IMAGE_TAG}" \
             cast send \
@@ -90,48 +90,21 @@ if [ $TOTAL_CLAIM_COUNT -gt 0 ]; then
                 $GAME_ADDRESS \
                 "resolveClaim(uint256,uint256)" \
                 $claim_index \
-                10; then
-            
+                10 2>&1 || true)
+        
+        if echo "$resolve_output" | grep -q "success"; then
             echo "✅ Claim $claim_index resolved successfully"
-            
-            # Wait for transaction to be processed and claim to be resolved
-            echo "⏳ Waiting for claim $claim_index to be fully resolved..."
-            
-            # Check if claim is resolved by checking its status
-            max_wait=100
-            wait_count=0
-            claim_resolved=false
-            
-            while [ $wait_count -lt $max_wait ] && [ "$claim_resolved" = false ]; do
-                wait_count=$((wait_count + 1))
-                
-                # Check if claim is resolved (implementation may vary, using a simple delay for now)
-                sleep 1
-                
-                # Try to get claim data to verify it's still valid/resolved
-                claim_data=$(docker run --rm \
-                    --network "$DOCKER_NETWORK" \
-                    "${OP_STACK_IMAGE_TAG}" \
-                    cast call \
-                        --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-                        $GAME_ADDRESS \
-                        "claimData(uint256)" \
-                        $claim_index 2>/dev/null || echo "resolved")
-                
-                if [ "$claim_data" = "resolved" ] || [ $wait_count -ge $max_wait ]; then
-                    claim_resolved=true
-                    echo "✅ Claim $claim_index resolution confirmed (wait cycles: $wait_count)"
-                else
-                    echo "   ⏳ Still waiting for claim $claim_index resolution... ($wait_count/$max_wait)"
-                fi
-            done
-            
+        elif echo "$resolve_output" | grep -q "0xf1a94581"; then
+            echo "✅ Claim $claim_index already resolved, skipping..."
         else
-            echo "❌ Failed to resolve claim $claim_index, continuing with next..."
+            echo "❌ Failed to resolve claim $claim_index with unexpected error:"
+            echo "   Error: $(echo "$resolve_output" | head -1)"
+            echo "🛑 Stopping script due to unexpected error (not ClaimAlreadyResolved)"
+            exit 1
         fi
         
         # Brief pause between claim resolutions
-        sleep 2
+        sleep 0.5
         echo ""
     done
     
@@ -151,27 +124,6 @@ if [ $TOTAL_CLAIM_COUNT -gt 0 ]; then
             "resolve()"; then
         
         echo "✅ Game resolve() called successfully"
-        
-        # Wait for resolve to complete
-        echo "⏳ Waiting for game resolution to complete..."
-        sleep 10
-        
-        # Verify the game is resolved
-        resolved_status=$(docker run --rm \
-            --network "$DOCKER_NETWORK" \
-            "${OP_STACK_IMAGE_TAG}" \
-            cast call \
-                --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-                $GAME_ADDRESS \
-                "resolved()")
-        
-        echo "📊 Game resolved status: $resolved_status"
-        
-        if [ "$resolved_status" = "true" ] || [ "$resolved_status" = "0x0000000000000000000000000000000000000000000000000000000000000001" ]; then
-            echo "✅ Game resolution confirmed!"
-        else
-            echo "⚠️  Game resolution status unclear: $resolved_status"
-        fi
         
     else
         echo "❌ Failed to call game resolve(), will proceed with status check anyway"
@@ -223,20 +175,10 @@ if [ $STATUS_DECIMAL -eq $EXPECTED_STATUS ]; then
     echo "🏆 SUCCESS: Game resolved with DEFENDER_WINS!"
     echo "   Final Status: $STATUS_DECIMAL ($STATUS_NAME)"
     
-    # Additional info
-    RESOLVED=$(docker run --rm \
-        --network "$DOCKER_NETWORK" \
-        "${OP_STACK_IMAGE_TAG}" \
-        cast call \
-            --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-            $GAME_ADDRESS \
-            "resolved()")
-    
     echo ""
     echo "📋 Game Summary:"
     echo "   - Game Address: $GAME_ADDRESS"
     echo "   - Final Status: $STATUS_DECIMAL ($STATUS_NAME) ✅"
-    echo "   - Game Resolved: $RESOLVED"
     echo "   - Claims Manually Resolved: $TOTAL_CLAIM_COUNT"
     echo "   - Manual Resolution: ✅ Completed"
     
