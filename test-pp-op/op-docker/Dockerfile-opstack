@@ -3,7 +3,7 @@ WORKDIR /app
 
 ARG TARGETARCH
 
-RUN apt-get update && apt-get install -y curl git jq
+RUN apt-get update && apt-get install -y curl git jq docker.io
 
 RUN case ${TARGETARCH} in \
         "amd64") JUST_ARCH="x86_64" ;; \
@@ -29,9 +29,6 @@ RUN make op-program
 
 # Build cannon
 RUN make cannon
-
-# Generate prestate files
-RUN make cannon-prestates || echo "cannon-prestates failed, trying alternative approach"
 
 # build op-challenger
 RUN make op-challenger

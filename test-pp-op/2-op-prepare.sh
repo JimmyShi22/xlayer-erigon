@@ -272,11 +272,6 @@ docker run --rm \
     -e DOCKER_HOST=unix:///var/run/docker.sock \
     "${OP_STACK_IMAGE_TAG}" \
     bash -c "
-        echo '🔧 Installing Docker client...'
-        apt-get update -qq > /dev/null 2>&1
-        apt-get install -y -qq docker.io > /dev/null 2>&1
-        echo '✅ Docker client installation completed'
-        
         echo '📊 Verifying Docker connection:'
         docker --version
         docker ps --format 'table {{.Names}}\t{{.Status}}' | head -3
