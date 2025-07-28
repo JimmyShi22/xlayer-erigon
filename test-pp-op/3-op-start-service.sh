@@ -33,52 +33,6 @@ cd $PWD_DIR
 EXPORT_DIR="$PWD_DIR/data/cannon-data"
 mkdir -p $EXPORT_DIR
 
-# Note: The prestate files should already be generated in the Docker image during build
-# If we need to regenerate them, we should use cannon directly, not op-challenger
-echo "Checking for existing prestate files..."
-if [ ! -f "$EXPORT_DIR/prestate.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
-    echo "Prestate files missing, copying from Docker image..."
-    # Create temporary container to extract prestate files
-    TEMP_CONTAINER="temp-prestate-extract"
-    docker create --name "$TEMP_CONTAINER" "$OP_STACK_IMAGE_TAG"
-    
-    # Extract op-program and prestate files
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/op-program "$EXPORT_DIR/op-program" || echo "Warning: Could not copy op-program"
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate.json "$EXPORT_DIR/prestate.json" || echo "Warning: Could not copy prestate.json"
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate-proof.json "$EXPORT_DIR/prestate-proof.json" || echo "Warning: Could not copy prestate-proof.json"
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/meta.json "$EXPORT_DIR/meta.json" || echo "Warning: Could not copy meta.json"
-    
-    # Cleanup
-    docker rm -f "$TEMP_CONTAINER"
-    
-    # Gzip prestate.json if it exists
-    if [ -f "$EXPORT_DIR/prestate.json" ]; then
-        gzip -c "$EXPORT_DIR/prestate.json" > "$EXPORT_DIR/prestate.json.gz"
-        echo "✅ Created prestate.json.gz"
-        
-        # Calculate the actual prestate hash and update devnetL1.json if needed
-        ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate.json.gz" | awk '{print $1}')
-        DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
-        if [ -f "$DEVNET_L1_JSON" ]; then
-            CONFIGURED_HASH=$(jq -r '.faultGameAbsolutePrestate' "$DEVNET_L1_JSON" | sed 's/0x//')
-            if [ "$ACTUAL_HASH" != "$CONFIGURED_HASH" ]; then
-                echo "⚠️  Prestate hash mismatch detected!"
-                echo "   Configured: 0x$CONFIGURED_HASH"
-                echo "   Actual:     0x$ACTUAL_HASH"
-                echo "   Updating devnetL1.json with correct hash..."
-                
-                # Update the hash in devnetL1.json
-                jq --arg hash "0x$ACTUAL_HASH" '.faultGameAbsolutePrestate = $hash' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
-                echo "✅ Updated faultGameAbsolutePrestate in devnetL1.json"
-            else
-                echo "✅ Prestate hash matches configuration"
-            fi
-        fi
-    fi
-else
-    echo "✅ Prestate files already exist"
-fi
-
 echo "Adding game type to DisputeGameFactory via op-deployer..."
 
 RPC_URL=http://127.0.0.1:8545
@@ -90,7 +44,6 @@ PERMISSIONED_GAME_RAW=$(cast call --rpc-url $RPC_URL $DISPUTE_GAME_FACTORY_ADDRE
 PERMISSIONED_GAME="0x${PERMISSIONED_GAME_RAW: -40}"
 
 # Get prestate value from prestate-proof-mt64.json
-docker cp op-node:/app/op-program/bin/prestate-proof-mt64.json "$EXPORT_DIR/prestate-proof-mt64.json"
 ABSOLUTE_PRESTATE=$(jq -r '.pre' "$EXPORT_DIR/prestate-proof-mt64.json")
 MAX_GAME_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "maxGameDepth()")
 SPLIT_DEPTH=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "splitDepth()")
@@ -107,14 +60,11 @@ docker run --rm \
   bash -c "
     set -e
 
-    # Get ABSOLUTE_PRESTATE from prestate-proof-mt64.json
-    ABSOLUTE_PRESTATE=$(jq -r '.prestate' /app/op-program/bin/prestate-proof-mt64.json)
-
     echo '🚀 Executing AddGameType script...'
 
     forge script AddGameType.s.sol:AddGameType \
       --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
-      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,1,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,true,\"123\")' \
+      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,1,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$TEMP_CLOCK_EXTENSION,$TEMP_MAX_CLOCK_DURATION,1000000000000000000,$VM,true,\"123\")' \
       --broadcast \
       --private-key $DEPLOYER_PRIVATE_KEY \
       --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
@@ -179,8 +129,8 @@ fi
 echo "🛑 Stopping op-proposer..."
 docker compose stop op-proposer
 
-echo "⏰ Sleeping for MAX_CLOCK_DURATION ($MAX_CLOCK_DURATION seconds)..."
-sleep $MAX_CLOCK_DURATION
+echo "⏰ Sleeping for ($TEMP_MAX_CLOCK_DURATION seconds)..."
+sleep $TEMP_MAX_CLOCK_DURATION
 
 echo "🔧 Executing dispute resolution sequence using op-challenger..."
 
@@ -270,10 +220,10 @@ docker run --rm \
     
     cast send \$ANCHOR_STATE_REGISTRY_ADDR 'setRespectedGameType(uint32)' 0 --rpc-url $L1_RPC_URL_IN_DOCKER --private-key $DEPLOYER_PRIVATE_KEY
 
-    echo "✅ setRespectedGameType completed successfully"
+    echo '✅ setRespectedGameType completed successfully'
   "
 
 export GAME_TYPE=0
 
-sleep $GAME_WINDOW
+sleep $TEMP_GAME_WINDOW
 docker compose up -d op-proposer op-challenger op-dispute-mon

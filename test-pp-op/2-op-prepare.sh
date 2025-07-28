@@ -55,47 +55,6 @@ cd $PWD_DIR
 
 source .env
 
-# Ensure prestate files exist and devnetL1.json is consistent before deploying contracts
-EXPORT_DIR="$PWD_DIR/data/cannon-data"
-mkdir -p $EXPORT_DIR
-
-echo "Checking prestate consistency before contract deployment..."
-if [ ! -f "$EXPORT_DIR/prestate-proof-mt64.json.gz" ] || [ ! -f "$EXPORT_DIR/op-program" ]; then
-    echo "Extracting prestate files from Docker image..."
-    TEMP_CONTAINER="temp-prestate-extract"
-    docker create --name "$TEMP_CONTAINER" "$OP_STACK_IMAGE_TAG"
-    
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/op-program "$EXPORT_DIR/op-program" || echo "Warning: Could not copy op-program"
-    docker cp "$TEMP_CONTAINER":/app/op-program/bin/prestate-proof-mt64.json "$EXPORT_DIR/prestate-proof-mt64.json" || echo "Warning: Could not copy prestate-proof-mt64.json"
-    
-    docker rm -f "$TEMP_CONTAINER"
-    
-    if [ -f "$EXPORT_DIR/prestate-proof-mt64.json" ]; then
-        gzip -c "$EXPORT_DIR/prestate-proof-mt64.json" > "$EXPORT_DIR/prestate-proof-mt64.json.gz"
-        echo "✅ Created prestate-proof-mt64.json.gz"
-    fi
-fi
-
-# Verify and update prestate hash in devnetL1.json
-if [ -f "$EXPORT_DIR/prestate-proof-mt64.json.gz" ]; then
-    ACTUAL_HASH=$(sha256sum "$EXPORT_DIR/prestate-proof-mt64.json.gz" | awk '{print $1}')
-    DEVNET_L1_JSON="$PWD_DIR/config-op/devnetL1.json"
-    
-    if [ -f "$DEVNET_L1_JSON" ]; then
-        CONFIGURED_HASH=$(jq -r '.faultGameAbsolutePrestate' "$DEVNET_L1_JSON" | sed 's/0x//')
-        if [ "$ACTUAL_HASH" != "$CONFIGURED_HASH" ]; then
-            echo "⚠️  Updating prestate hash in devnetL1.json for contract deployment"
-            echo "   Old: 0x$CONFIGURED_HASH"
-            echo "   New: 0x$ACTUAL_HASH"
-            
-            jq --arg hash "0x$ACTUAL_HASH" '.faultGameAbsolutePrestate = $hash' "$DEVNET_L1_JSON" > "${DEVNET_L1_JSON}.tmp" && mv "${DEVNET_L1_JSON}.tmp" "$DEVNET_L1_JSON"
-            echo "✅ Updated faultGameAbsolutePrestate for contract deployment"
-        else
-            echo "✅ Prestate hash is consistent in devnetL1.json"
-        fi
-    fi
-fi
-
 echo "🔧 Bootstrapping superchain with op-deployer..."
 
 docker run \
@@ -298,3 +257,33 @@ docker compose run --no-deps \
   /genesis.json
 
 echo "finished init op-geth"
+
+# Ensure prestate files exist and devnetL1.json is consistent before deploying contracts
+EXPORT_DIR="$PWD_DIR/data/cannon-data"
+mkdir -p $EXPORT_DIR
+
+docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "$(pwd)/config-op/rollup.json:/app/op-program/chainconfig/configs/195-rollup.json" \
+    -v "$(pwd)/config-op/genesis.json:/app/op-program/chainconfig/configs/195-genesis-l2.json" \
+    -v "$EXPORT_DIR:/app/op-program/bin" \
+    -w /app \
+    --network "${DOCKER_NETWORK}" \
+    -e DOCKER_HOST=unix:///var/run/docker.sock \
+    "${OP_STACK_IMAGE_TAG}" \
+    bash -c "
+        echo '🔧 Installing Docker client...'
+        apt-get update -qq > /dev/null 2>&1
+        apt-get install -y -qq docker.io > /dev/null 2>&1
+        echo '✅ Docker client installation completed'
+        
+        echo '📊 Verifying Docker connection:'
+        docker --version
+        docker ps --format 'table {{.Names}}\t{{.Status}}' | head -3
+        
+        echo '🚀 Running make reproducible-prestate...'
+        make reproducible-prestate
+        
+        echo '📁 Checking contents of op-program/bin:'
+        ls -la /app/op-program/bin/ || echo 'Directory is empty or does not exist'
+    "
