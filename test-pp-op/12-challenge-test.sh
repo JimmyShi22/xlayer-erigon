@@ -82,6 +82,49 @@ fi
 
 echo "✅ Latest game address: $LATEST_GAME_ADDRESS"
 
+# Get challenge start time from first claim's clock
+echo "🕒 Getting challenge start time from first claim's clock..."
+
+# Get claimData for the first claim (index 0)
+FIRST_CLAIM_DATA=$(docker run --rm \
+    --network "$DOCKER_NETWORK" \
+    "${OP_STACK_IMAGE_TAG}" \
+    cast call \
+        --rpc-url ${L1_RPC_URL_IN_DOCKER} \
+        $LATEST_GAME_ADDRESS \
+        "claimData(uint256)" \
+        0 2>/dev/null)
+
+if [ -n "$FIRST_CLAIM_DATA" ] && [ "$FIRST_CLAIM_DATA" != "0x" ]; then
+    # Extract the clock field from ClaimData struct
+    # Struct layout: parentIndex(32B) + counteredBy(32B) + claimant(32B) + bond(32B) + claim(32B) + position(32B) + clock(32B)
+    # Clock is the 7th field (0-indexed = 6), starts at position 6*64 = 384 characters
+    RAW_HEX=$(echo "$FIRST_CLAIM_DATA" | sed 's/0x//')
+    CLAIM_CLOCK_HEX=$(echo "$RAW_HEX" | cut -c385-448)
+    
+    # Convert hex clock to decimal epoch
+    CHALLENGE_START_EPOCH=$(printf "%d" "0x$CLAIM_CLOCK_HEX" 2>/dev/null || echo "0")
+    
+    if [ "$CHALLENGE_START_EPOCH" -gt 0 ]; then
+        # Convert epoch to human readable time
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            CHALLENGE_START_TIME=$(date -r $CHALLENGE_START_EPOCH 2>/dev/null || echo "Unknown time")
+        else
+            CHALLENGE_START_TIME=$(date -d "@$CHALLENGE_START_EPOCH" 2>/dev/null || echo "Unknown time")
+        fi
+        echo "✅ Challenge start time from claim 0 clock: $CHALLENGE_START_TIME (epoch: $CHALLENGE_START_EPOCH)"
+        echo "   📊 Raw claim data length: ${#RAW_HEX} chars, clock hex: 0x$CLAIM_CLOCK_HEX"
+    else
+        echo "⚠️  Invalid clock value from claim 0 (0x$CLAIM_CLOCK_HEX), using current time as fallback"
+        CHALLENGE_START_TIME=$(date)
+        CHALLENGE_START_EPOCH=$(date +%s)
+    fi
+else
+    echo "⚠️  Failed to get claimData for claim 0, using current time as fallback"
+    CHALLENGE_START_TIME=$(date)
+    CHALLENGE_START_EPOCH=$(date +%s)
+fi
+
 # Get game information
 echo "📋 Getting game information..."
 GAME_INFO=$(docker run --rm \
@@ -102,8 +145,6 @@ echo "🌳 Initial claim depth: $INITIAL_DEPTH"
 echo "🎯 Target: Reach maximum depth (73) then wait for DEFENDER_WINS (status=2)"
 
 echo "2. Starting move sequence..."
-
-
 
 # Function to get the depth of a specific claim
 get_claim_depth() {
@@ -299,19 +340,13 @@ while true; do  # Continue until max depth reached or game ends
     fi
 done
 
-echo "🏁 Move sequence completed!"
+echo "🏁 Challenge sequence completed!"
 echo "   Total attempts: $ATTEMPT_COUNT"
 echo "   Successful moves: $SUCCESSFUL_MOVES"
+echo "   Latest claim depth: $LATEST_DEPTH"
 
-# Wait longer for game to resolve when max depth is reached
-echo "⏰ Waiting for game to resolve after reaching max depth..."
-echo "   This may take several minutes..."
-
-# Manual resolve process: resolve claims from back to front
-echo "🔧 Starting manual claim resolution process..."
-
-# Get current claim count
-TOTAL_CLAIMS=$(docker run --rm \
+# Get final claim count for summary
+FINAL_CLAIMS=$(docker run --rm \
     --network "$DOCKER_NETWORK" \
     "${OP_STACK_IMAGE_TAG}" \
     cast call \
@@ -319,180 +354,97 @@ TOTAL_CLAIMS=$(docker run --rm \
         $LATEST_GAME_ADDRESS \
         "claimDataLen()")
 
-TOTAL_CLAIM_COUNT=$(printf "%d" $TOTAL_CLAIMS)
-echo "📊 Total claims to resolve: $TOTAL_CLAIM_COUNT"
+FINAL_CLAIM_COUNT=$(printf "%d" $FINAL_CLAIMS)
 
-# Resolve claims from back to front (highest index to 0)
-if [ $TOTAL_CLAIM_COUNT -gt 0 ]; then
-    echo "🔄 Resolving claims from index $((TOTAL_CLAIM_COUNT - 1)) down to 0..."
-    
-    for (( claim_index=$((TOTAL_CLAIM_COUNT - 1)); claim_index>=0; claim_index-- )); do
-        echo "🎯 Resolving claim at index $claim_index (_numToResolve=10)..."
-        
-        # Call claimResolve with _numToResolve=10
-        if docker run --rm \
-            --network "$DOCKER_NETWORK" \
-            "${OP_STACK_IMAGE_TAG}" \
-            cast send \
-                --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-                --private-key ${OP_CHALLENGER_PRIVATE_KEY} \
-                $LATEST_GAME_ADDRESS \
-                "claimResolve(uint256,uint256)" \
-                $claim_index \
-                10; then
-            
-            echo "✅ Claim $claim_index resolved successfully"
-            
-            # Wait for transaction to be processed and claim to be resolved
-            echo "⏳ Waiting for claim $claim_index to be fully resolved..."
-            
-            # Check if claim is resolved by checking its status
-            local max_wait=100
-            local wait_count=0
-            local claim_resolved=false
-            
-            while [ $wait_count -lt $max_wait ] && [ "$claim_resolved" = false ]; do
-                wait_count=$((wait_count + 1))
-                
-                # Check if claim is resolved (implementation may vary, using a simple delay for now)
-                sleep 1
-                
-                # Try to get claim data to verify it's still valid/resolved
-                local claim_data=$(docker run --rm \
-                    --network "$DOCKER_NETWORK" \
-                    "${OP_STACK_IMAGE_TAG}" \
-                    cast call \
-                        --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-                        $LATEST_GAME_ADDRESS \
-                        "claimData(uint256)" \
-                        $claim_index 2>/dev/null || echo "resolved")
-                
-                if [ "$claim_data" = "resolved" ] || [ $wait_count -ge $max_wait ]; then
-                    claim_resolved=true
-                    echo "✅ Claim $claim_index resolution confirmed (wait cycles: $wait_count)"
-                else
-                    echo "   ⏳ Still waiting for claim $claim_index resolution... ($wait_count/$max_wait)"
-                fi
-            done
-            
-        else
-            echo "❌ Failed to resolve claim $claim_index, continuing with next..."
-        fi
-        
-        # Brief pause between claim resolutions
-        sleep 2
-    done
-    
-    echo "✅ All claims processed, now calling resolve()..."
-    
-    # Call the main resolve() function after all claims are processed
-    echo "🎯 Calling game resolve()..."
-    
-    if docker run --rm \
-        --network "$DOCKER_NETWORK" \
-        "${OP_STACK_IMAGE_TAG}" \
-        cast send \
-            --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-            --private-key ${OP_CHALLENGER_PRIVATE_KEY} \
-            $LATEST_GAME_ADDRESS \
-            "resolve()"; then
-        
-        echo "✅ Game resolve() called successfully"
-        
-        # Wait for resolve to complete
-        echo "⏳ Waiting for game resolution to complete..."
-        sleep 10
-        
-        # Verify the game is resolved
-        local resolved_status=$(docker run --rm \
-            --network "$DOCKER_NETWORK" \
-            "${OP_STACK_IMAGE_TAG}" \
-            cast call \
-                --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-                $LATEST_GAME_ADDRESS \
-                "resolved()")
-        
-        echo "📊 Game resolved status: $resolved_status"
-        
-        if [ "$resolved_status" = "true" ] || [ "$resolved_status" = "0x0000000000000000000000000000000000000000000000000000000000000001" ]; then
-            echo "✅ Game resolution confirmed!"
-        else
-            echo "⚠️  Game resolution status unclear: $resolved_status"
-        fi
-        
-    else
-        echo "❌ Failed to call game resolve(), will proceed with status check anyway"
-    fi
-    
-else
-    echo "⚠️  No claims to resolve (claim count: $TOTAL_CLAIM_COUNT)"
-fi
+# Calculate recommended execution time (MAX_CLOCK_DURATION after challenge start)
+# Get MAX_CLOCK_DURATION from environment, default to 1 hour (3600 seconds) if not set
+CLOCK_DURATION_SECONDS=${MAX_CLOCK_DURATION:-3600}
 
-echo "🏁 Manual resolution process completed, checking final status..."
+# Get challenger duration for claims 71 and 72, take the maximum
+echo "🔍 Getting challenger durations for claims 71 and 72..."
 
-# Final status check after manual resolution
-echo "📊 Checking final game status after manual resolution..."
-
-GAME_STATUS=$(docker run --rm \
+duration_71=$(docker run --rm \
     --network "$DOCKER_NETWORK" \
     "${OP_STACK_IMAGE_TAG}" \
     cast call \
         --rpc-url ${L1_RPC_URL_IN_DOCKER} \
         $LATEST_GAME_ADDRESS \
-        "status()")
+        "getChallengerDuration(uint256)" \
+        71 2>/dev/null || echo "0")
 
-STATUS_DECIMAL=$(printf "%d" $GAME_STATUS)
+duration_72=$(docker run --rm \
+    --network "$DOCKER_NETWORK" \
+    "${OP_STACK_IMAGE_TAG}" \
+    cast call \
+        --rpc-url ${L1_RPC_URL_IN_DOCKER} \
+        $LATEST_GAME_ADDRESS \
+        "getChallengerDuration(uint256)" \
+        72 2>/dev/null || echo "0")
 
-echo "📊 Final game status: $GAME_STATUS (decimal: $STATUS_DECIMAL)"
+# Convert hex to decimal and find maximum
+duration_71_dec=$(printf "%d" $duration_71 2>/dev/null || echo "0")
+duration_72_dec=$(printf "%d" $duration_72 2>/dev/null || echo "0")
 
-# Check if status equals 2 (DEFENDER_WINS)
-if [ $STATUS_DECIMAL -eq 2 ]; then
-    echo "🏆 SUCCESS: Game status is 2 (DEFENDER_WINS) - Challenge test passed!"
-    
-    # Additional info
-    RESOLVED=$(docker run --rm \
-        --network "$DOCKER_NETWORK" \
-        "${OP_STACK_IMAGE_TAG}" \
-        cast call \
-            --rpc-url ${L1_RPC_URL_IN_DOCKER} \
-            $LATEST_GAME_ADDRESS \
-            "resolved()")
-    
-    echo "📋 Game Claims (via list-claims):"
-    docker run --rm \
-        --network "$DOCKER_NETWORK" \
-        -v "$(pwd)/data/cannon-data:/data" \
-        -v "$(pwd)/config-op/rollup.json:/rollup.json" \
-        -v "$(pwd)/config-op/genesis.json:/l2-genesis.json" \
-        "${OP_STACK_IMAGE_TAG}" \
-        /app/op-challenger/bin/op-challenger list-claims \
-            --l1-eth-rpc=${L1_RPC_URL_IN_DOCKER} \
-            --game-address=$LATEST_GAME_ADDRESS
-    
-    exit 0
+if [ $duration_71_dec -gt $duration_72_dec ]; then
+    max_challenger_duration=$duration_71_dec
+    max_claim=71
 else
-    echo "❌ FAILURE: Game status is $STATUS_DECIMAL, expected 2 (DEFENDER_WINS)"
-    
-    # Status meanings for debugging
-    case $STATUS_DECIMAL in
-        0)
-            echo "   Current status: IN_PROGRESS (0)"
-            ;;
-        1)
-            echo "   Current status: CHALLENGER_WINS (1)"
-            ;;
-        *)
-            echo "   Current status: UNKNOWN ($STATUS_DECIMAL)"
-            ;;
-    esac
-    
-    echo "📋 Debug Information:"
-    echo "   - Game Address: $LATEST_GAME_ADDRESS"
-    echo "   - Total Attempts: $ATTEMPT_COUNT"
-    echo "   - Successful Moves: $SUCCESSFUL_MOVES"
-    echo "   - Claims Processed: $TOTAL_CLAIM_COUNT"
-    echo "   - Manual Resolution: Attempted"
-    
-    exit 1
+    max_challenger_duration=$duration_72_dec
+    max_claim=72
 fi
+
+echo "📊 Challenger durations:"
+echo "   Claim 71: $duration_71_dec seconds"
+echo "   Claim 72: $duration_72_dec seconds"
+echo "   Maximum: $max_challenger_duration seconds (claim $max_claim)"
+
+# Calculate target time using epoch timestamp (more reliable)
+# Total wait = MAX_CLOCK_DURATION + max challenger duration
+TARGET_EPOCH=$((CHALLENGE_START_EPOCH + CLOCK_DURATION_SECONDS + max_challenger_duration))
+
+# Convert back to human readable time
+if command -v gdate >/dev/null 2>&1; then
+    # GNU date (available via homebrew on macOS)
+    RECOMMENDED_TIME=$(gdate -d "@$TARGET_EPOCH" 2>/dev/null || echo "Challenge start + $CLOCK_DURATION_MINUTES minutes")
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS date command
+    RECOMMENDED_TIME=$(date -r $TARGET_EPOCH 2>/dev/null || echo "Challenge start + $CLOCK_DURATION_MINUTES minutes")
+else
+    # Linux date command
+    RECOMMENDED_TIME=$(date -d "@$TARGET_EPOCH" 2>/dev/null || echo "Challenge start + $CLOCK_DURATION_MINUTES minutes")
+fi
+
+echo ""
+echo "🎯 Game Resolution Required"
+echo "============================================"
+echo "The challenge phase has reached maximum depth ($LATEST_DEPTH)."
+echo "Now you need to manually resolve the game to complete the process."
+echo ""
+echo "📋 Game Information:"
+echo "   - Game Address: $LATEST_GAME_ADDRESS"
+echo "   - Challenge Started: $CHALLENGE_START_TIME"
+echo "   - Total Claims: $FINAL_CLAIM_COUNT"
+echo "   - Successful Challenger Moves: $SUCCESSFUL_MOVES"
+echo "   - Max Challenger Duration: $max_challenger_duration seconds (claim $max_claim)"
+echo ""
+echo "⏰ IMPORTANT: You must wait until the following time before running the game resolution:"
+echo "   Wait until: $RECOMMENDED_TIME"
+echo "   (Do NOT run the resolution before this time. This is a strict requirement to ensure all game mechanics have completed.)"
+echo ""
+echo "📊 Total Wait Time Calculation:"
+echo "   Base time (MAX_CLOCK_DURATION): $((CLOCK_DURATION_SECONDS / 60)) minutes ($CLOCK_DURATION_SECONDS seconds)"
+echo "   Additional challenger duration: $max_challenger_duration seconds"
+echo "   Total additional wait: $((CLOCK_DURATION_SECONDS + max_challenger_duration)) seconds"
+echo ""
+echo "🚫 Do NOT run the resolution command before $RECOMMENDED_TIME, or it will fail."
+echo ""
+echo "🚀 After the recommended time, run the following command to resolve the game:"
+echo "   ./13-resolve-game.sh $LATEST_GAME_ADDRESS"
+echo ""
+echo "📝 This command will:"
+echo "   1. Resolve all claims from back to front (claimResolve)"
+echo "   2. Call the main game resolve() function"
+echo "   3. Verify the final status is DEFENDER_WINS (status=2)"
+echo ""
+exit 0
 
