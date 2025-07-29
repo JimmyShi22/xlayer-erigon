@@ -56,7 +56,7 @@ docker run --rm \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
   -w /app/packages/contracts-bedrock/scripts/deploy \
-  "${OP_STACK_IMAGE_TAG}" \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
     set -e
 
@@ -71,34 +71,6 @@ docker run --rm \
 
     echo '✅ AddGameType operations completed successfully'
   "
-
-# docker run \
-#     --network "$DOCKER_NETWORK" \
-#     -v "$(pwd)/$CONFIG_DIR:/deployments" \
-#     -w /app \
-#     "${OP_STACK_IMAGE_TAG}" \
-#     bash -c "
-#     set -e
-#     /app/op-deployer/bin/op-deployer manage add-game-type \
-#         --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
-#         --dispute-max-game-depth $MAX_GAME_DEPTH \
-#         --dispute-split-depth $SPLIT_DEPTH \
-#         --dispute-clock-extension $CLOCK_EXTENSION \
-#         --dispute-max-clock-duration $MAX_CLOCK_DURATION \
-#         --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
-#         --vm-address $VM \
-#         --l1-proxy-admin-owner-address $ADMIN_OWNER_ADDRESS \
-#         --opcm-impl-address $OPCM_IMPL_ADDRESS \
-#         --system-config-proxy-address $SYSTEM_CONFIG_PROXY_ADDRESS \
-#         --op-chain-proxy-admin-address $PROXY_ADMIN \
-#         --dispute-game-type 0 \
-#         --dispute-absolute-prestate $ABSOLUTE_PRESTATE \
-#         --salt-mixer “123” \
-#         --log.level debug \
-#         --log.color true \
-#         --permissionless \
-#     " 2>&1 | tee add-game-type.log
-# echo "add-game-type completed"
 
 export GAME_TYPE=1
 docker compose up -d op-proposer
@@ -196,7 +168,7 @@ docker run --rm \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
   -w /app/packages/contracts-bedrock/scripts/deploy \
-  "${OP_STACK_IMAGE_TAG}" \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
     forge script AddGameType.s.sol:AddGameType \
       --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \

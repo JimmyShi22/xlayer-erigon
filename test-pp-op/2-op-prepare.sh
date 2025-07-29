@@ -36,9 +36,11 @@ cd $TMP_DIR
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
     git clone -b googgoog/update-add-game-type https://github.com/googgoog/optimism.git
-    cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile
+    cp $PWD_DIR/op-docker/Dockerfile-contacts optimism/Dockerfile-contacts
+    cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile-opstack
     cd optimism
-    docker build -t op-stack:v1.13.4 .
+    docker build -t op-contracts:v1.13.4 -f Dockerfile-contacts .
+    docker build -t op-stack:v1.13.4 -f Dockerfile-opstack .
     cd ..
 fi
 
@@ -61,7 +63,7 @@ docker run \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
   -w /app \
-  "${OP_STACK_IMAGE_TAG}" \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
     set -e
     /app/op-deployer/bin/op-deployer bootstrap superchain \
@@ -85,7 +87,7 @@ docker run \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
   -w /app \
-  "${OP_STACK_IMAGE_TAG}" \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
     set -e
     /app/op-deployer/bin/op-deployer bootstrap implementations \
@@ -122,7 +124,7 @@ docker run \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
   -w /app \
-  "${OP_STACK_IMAGE_TAG}" \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
     set -e
     echo '🔧 Starting contract deployment with op-deployer...'

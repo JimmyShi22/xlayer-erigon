@@ -1,10 +1,22 @@
-FROM golang:1.24 as builder
+# Single stage build with Go
+FROM golang:1.24
 WORKDIR /app
 
+# Install all dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    jq \
+    docker.io \
+    make \
+    gcc \
+    nodejs \
+    npm \
+    bash \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install just
 ARG TARGETARCH
-
-RUN apt-get update && apt-get install -y curl git jq docker.io
-
 RUN case ${TARGETARCH} in \
         "amd64") JUST_ARCH="x86_64" ;; \
         "arm64") JUST_ARCH="aarch64" ;; \
@@ -13,32 +25,24 @@ RUN case ${TARGETARCH} in \
     curl -sSL "https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-${JUST_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C /usr/local/bin just && \
     chmod +x /usr/local/bin/just
 
-
-RUN apt-get install -y nodejs npm && \
-curl -L https://foundry.paradigm.xyz | bash && \
-/root/.foundry/bin/foundryup && \
-mv /root/.foundry/bin/* /usr/local/bin/ && \
-apt-get clean && rm -rf /var/lib/apt/lists/* /root/.foundry
-
+# Cache go dependencies first
 COPY go.mod go.sum ./
 RUN go mod download
+
+# Copy source code
 COPY . .
 
-# Build op-program first
-RUN make op-program
+# Build Go binaries
+RUN make build-go
 
-# Build cannon
-RUN make cannon
+# Copy foundry tools and artifacts from contracts image
+COPY --from=op-contracts:v1.13.4 /usr/local/bin/forge /usr/local/bin/cast /usr/local/bin/anvil /usr/local/bin/
 
-# build op-challenger
-RUN make op-challenger
+# Verify installations
+RUN echo "🔍 Verifying installations:" && \
+    which go && go version && \
+    which docker && docker --version && \
+    which forge && forge --version && \
+    which just && just --version || echo "⚠️ Some tools not found"
 
-# Build everything else
-RUN make build
-
-# build op-deployer
-RUN go build -o /app/op-deployer/bin/op-deployer ./op-deployer/cmd/op-deployer
-
-WORKDIR /app/packages/contracts-bedrock
-RUN forge build
 WORKDIR /app
