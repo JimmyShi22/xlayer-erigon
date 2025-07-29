@@ -36,13 +36,13 @@ cd $TMP_DIR
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
     git clone -b v1.13.4 https://github.com/ethereum-optimism/optimism.git
-    cp $PWD_DIR/op-docker/Dockerfile-contacts optimism/Dockerfile-contracts
+    cp $PWD_DIR/op-docker/Dockerfile-contracts optimism/Dockerfile-contracts
     cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile-opstack
 
     # cp Transactor.sol to optimism, which is used for addGameType
     cp $PWD_DIR/contracts/Transactor.sol optimism/packages/contracts-bedrock/src/periphery/Transactor.sol
     cd optimism
-    docker build -t op-contracts:v1.13.4 -f Dockerfile-contacts .
+    docker build -t op-contracts:v1.13.4 -f Dockerfile-contracts .
     docker build -t op-stack:v1.13.4 -f Dockerfile-opstack .
     cd ..
 fi
