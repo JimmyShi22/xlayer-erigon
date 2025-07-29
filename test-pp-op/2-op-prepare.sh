@@ -36,10 +36,10 @@ cd $TMP_DIR
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
     git clone -b googgoog/update-add-game-type https://github.com/googgoog/optimism.git
-    cp $PWD_DIR/op-docker/Dockerfile-contacts optimism/Dockerfile-contacts
+    cp $PWD_DIR/op-docker/Dockerfile-contracts optimism/Dockerfile-contracts
     cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile-opstack
     cd optimism
-    docker build -t op-contracts:v1.13.4 -f Dockerfile-contacts .
+    docker build -t op-contracts:v1.13.4 -f Dockerfile-contracts .
     docker build -t op-stack:v1.13.4 -f Dockerfile-opstack .
     cd ..
 fi
