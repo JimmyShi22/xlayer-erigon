@@ -35,9 +35,12 @@ cd $TMP_DIR
 
 if [ ! -d "optimism" ]; then
     echo "Cloning Optimism repository..."
-    git clone -b googgoog/update-add-game-type https://github.com/googgoog/optimism.git
-    cp $PWD_DIR/op-docker/Dockerfile-contacts optimism/Dockerfile-contacts
+    git clone -b v1.13.4 https://github.com/ethereum-optimism/optimism.git
+    cp $PWD_DIR/op-docker/Dockerfile-contacts optimism/Dockerfile-contracts
     cp $PWD_DIR/op-docker/Dockerfile-opstack optimism/Dockerfile-opstack
+
+    # cp Transactor.sol to optimism, which is used for addGameType
+    cp $PWD_DIR/contracts/Transactor.sol optimism/packages/contracts-bedrock/src/periphery/Transactor.sol
     cd optimism
     docker build -t op-contracts:v1.13.4 -f Dockerfile-contacts .
     docker build -t op-stack:v1.13.4 -f Dockerfile-opstack .
@@ -57,6 +60,34 @@ cd $PWD_DIR
 
 source .env
 
+# Deploy Transactor contract first
+echo "🔧 Deploying Transactor contract..."
+TRANSACTOR_DEPLOY_OUTPUT=$(docker run \
+  --network "$DOCKER_NETWORK" \
+  -v "$(pwd)/$CONFIG_DIR:/deployments" \
+  -w /app \
+  "${OP_CONTRACTS_IMAGE_TAG}" \
+  bash -c "
+    set -e
+    cd /app/packages/contracts-bedrock
+    cast send --rpc-url $L1_RPC_URL_IN_DOCKER --private-key $DEPLOYER_PRIVATE_KEY --create \"\$(forge inspect src/periphery/Transactor.sol:Transactor bytecode)\$(cast abi-encode 'constructor(address)' $ADMIN_OWNER_ADDRESS | sed 's/0x//')\" --json
+  ")
+
+# Extract contract address from deployment output
+TRANSACTOR_ADDRESS=$(echo "$TRANSACTOR_DEPLOY_OUTPUT" | jq -r '.contractAddress // empty')
+if [ -z "$TRANSACTOR_ADDRESS" ] || [ "$TRANSACTOR_ADDRESS" = "null" ]; then
+  echo "❌ Failed to extract Transactor contract address from deployment output"
+  echo "Deployment output: $TRANSACTOR_DEPLOY_OUTPUT"
+  exit 1
+fi
+
+echo "✅ Transactor contract deployed at: $TRANSACTOR_ADDRESS"
+
+# Update .env file with Transactor address
+sed_inplace "s/TRANSACTOR=.*/TRANSACTOR=$TRANSACTOR_ADDRESS/" .env
+source .env
+echo "✅ Updated TRANSACTOR address in .env: $TRANSACTOR_ADDRESS"
+
 echo "🔧 Bootstrapping superchain with op-deployer..."
 
 docker run \
@@ -70,7 +101,7 @@ docker run \
       --l1-rpc-url $L1_RPC_URL_IN_DOCKER \
       --private-key $DEPLOYER_PRIVATE_KEY \
       --artifacts-locator file:///app/packages/contracts-bedrock/forge-artifacts \
-      --superchain-proxy-admin-owner $ADMIN_OWNER_ADDRESS \
+      --superchain-proxy-admin-owner $TRANSACTOR_ADDRESS \
       --protocol-versions-owner $ADMIN_OWNER_ADDRESS \
       --guardian $ADMIN_OWNER_ADDRESS \
       --outfile /deployments/superchain.json
@@ -107,6 +138,10 @@ docker run \
 
 cp ./config-op/intent.toml.bak ./config-op/intent.toml
 cp ./config-op/state.json.bak ./config-op/state.json
+
+# Update intent.toml with Transactor address for l1ProxyAdminOwner
+sed_inplace "s/l1ProxyAdminOwner = \".*\"/l1ProxyAdminOwner = \"$TRANSACTOR_ADDRESS\"/" ./config-op/intent.toml
+echo "✅ Updated l1ProxyAdminOwner in intent.toml: $TRANSACTOR_ADDRESS"
 
 # Read opcmAddress from implementations.json and write it into intent.toml
 OPCM_ADDRESS=$(jq -r '.opcmAddress' ./config-op/implementations.json)

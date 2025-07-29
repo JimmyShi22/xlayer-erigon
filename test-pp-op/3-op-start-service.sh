@@ -12,6 +12,143 @@ sed_inplace() {
 # Load environment variables early
 source .env
 
+# Function to add game type via Transactor
+add_game_type_via_transactor() {
+    local GAME_TYPE=$1
+    local IS_PERMISSIONED=$2
+    local CLOCK_EXTENSION_VAL=$3
+    local MAX_CLOCK_DURATION_VAL=$4
+    local ABSOLUTE_PRESTATE_VAL=$5
+    
+    echo "=== Adding Game Type $GAME_TYPE via Transactor ==="
+    echo "Game Type: $GAME_TYPE"
+    echo "Is Permissioned: $IS_PERMISSIONED"
+    echo "Clock Extension: $CLOCK_EXTENSION_VAL"
+    echo "Max Clock Duration: $MAX_CLOCK_DURATION_VAL"
+    echo ""
+    
+    docker run --rm \
+      --network "$DOCKER_NETWORK" \
+      -v "$(pwd)/$CONFIG_DIR:/deployments" \
+      -w /app \
+      "${OP_CONTRACTS_IMAGE_TAG}" \
+      bash -c "
+        set -e
+        
+        # Get addresses from environment
+        RPC_URL=$L1_RPC_URL_IN_DOCKER
+        TRANSACTOR_ADDRESS=$TRANSACTOR
+        SENDER_ADDRESS=\$(cast wallet address --private-key $DEPLOYER_PRIVATE_KEY)
+        PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY
+        
+        # Get addresses from environment variables
+        SYSTEM_CONFIG=$SYSTEM_CONFIG_PROXY_ADDRESS
+        PROXY_ADMIN=$PROXY_ADMIN
+        OPCM=$OPCM_IMPL_ADDRESS
+        DISPUTE_GAME_FACTORY=\$(cast call --rpc-url \$RPC_URL \$SYSTEM_CONFIG 'disputeGameFactory()(address)')
+        
+        echo 'State JSON Path: '\$STATE_JSON_PATH
+        echo 'Dispute Game Factory: '\$DISPUTE_GAME_FACTORY
+        echo 'System Config: '\$SYSTEM_CONFIG
+        echo 'Proxy Admin: '\$PROXY_ADMIN
+        echo 'OPCM: '\$OPCM
+        echo 'Transactor Address: '\$TRANSACTOR_ADDRESS
+        echo 'RPC URL: '\$RPC_URL
+        echo 'Sender Address: '\$SENDER_ADDRESS
+        echo ''
+        
+        # Retrieve existing permissioned game implementation for parameters
+        echo 'Retrieving permissioned game parameters...'
+        PERMISSIONED_GAME=\$(cast call --rpc-url \$RPC_URL \$DISPUTE_GAME_FACTORY 'gameImpls(uint32)(address)' 1)
+        echo 'Permissioned Game Implementation: '\$PERMISSIONED_GAME
+        
+        if [ \"\$PERMISSIONED_GAME\" == \"0x0000000000000000000000000000000000000000\" ]; then
+            echo 'Error: No permissioned game found. Cannot retrieve parameters.'
+            exit 1
+        fi
+        
+        # Retrieve parameters from existing permissioned game
+        ABSOLUTE_PRESTATE='$ABSOLUTE_PRESTATE_VAL'
+        MAX_GAME_DEPTH=\$(cast call --rpc-url \$RPC_URL \$PERMISSIONED_GAME 'maxGameDepth()')
+        SPLIT_DEPTH=\$(cast call --rpc-url \$RPC_URL \$PERMISSIONED_GAME 'splitDepth()')
+        VM=\$(cast call --rpc-url \$RPC_URL \$PERMISSIONED_GAME 'vm()(address)')
+        
+        echo 'Retrieved parameters:'
+        echo '  Absolute Prestate: '\$ABSOLUTE_PRESTATE
+        echo '  Max Game Depth: '\$MAX_GAME_DEPTH
+        echo '  Split Depth: '\$SPLIT_DEPTH
+        echo '  Clock Extension: '$CLOCK_EXTENSION_VAL'
+        echo '  Max Clock Duration: '$MAX_CLOCK_DURATION_VAL'
+        echo '  VM: '\$VM
+        echo ''
+        
+        # Set initial bond
+        INITIAL_BOND='1000000000000000000'  # 1 ETH in wei
+        
+        # Create unique salt mixer
+        SALT_MIXER='123'
+        
+        echo 'Creating addGameType calldata...'
+        
+        # Create calldata for addGameType function
+        ADDGAMETYPE_CALLDATA=\$(cast calldata 'addGameType((string,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool)[])' \
+        \"[(\
+        \\\"\$SALT_MIXER\\\",\
+        \$SYSTEM_CONFIG,\
+        \$PROXY_ADMIN,\
+        0x0000000000000000000000000000000000000000,\
+        $GAME_TYPE,\
+        \$ABSOLUTE_PRESTATE,\
+        \$MAX_GAME_DEPTH,\
+        \$SPLIT_DEPTH,\
+        $CLOCK_EXTENSION_VAL,\
+        $MAX_CLOCK_DURATION_VAL,\
+        \$INITIAL_BOND,\
+        \$VM,\
+        $IS_PERMISSIONED\
+        )]\")
+        
+        echo 'AddGameType calldata: '\$ADDGAMETYPE_CALLDATA
+        echo ''
+        
+        # Create calldata for Transactor's DELEGATECALL function
+        echo 'Creating Transactor DELEGATECALL calldata...'
+        TRANSACTOR_CALLDATA=\$(cast calldata 'DELEGATECALL(address,bytes)' \$OPCM \$ADDGAMETYPE_CALLDATA)
+        
+        echo 'Transactor calldata: '\$TRANSACTOR_CALLDATA
+        echo ''
+        
+        # Execute the transaction through Transactor
+        echo 'Executing transaction via Transactor...'
+        echo 'Target: '\$TRANSACTOR_ADDRESS
+        echo 'From: '\$SENDER_ADDRESS
+        
+        cast send \\
+            --rpc-url \$RPC_URL \\
+            --private-key \$PRIVATE_KEY \\
+            --from \$SENDER_ADDRESS \\
+            \$TRANSACTOR_ADDRESS \\
+            \$TRANSACTOR_CALLDATA
+        
+        echo ''
+        echo 'Transaction sent! Check the transaction hash above for confirmation.'
+        echo ''
+        
+        # Verify the new game type was added
+        echo 'Verifying new game type was added...'
+        NEW_GAME_IMPL=\$(cast call --rpc-url \$RPC_URL \$DISPUTE_GAME_FACTORY 'gameImpls(uint32)(address)' $GAME_TYPE)
+        
+        if [ \"\$NEW_GAME_IMPL\" != \"0x0000000000000000000000000000000000000000\" ]; then
+            echo '✅ Success! New game type $GAME_TYPE added.'
+            echo 'Game Type $GAME_TYPE Implementation: '\$NEW_GAME_IMPL
+        else
+            echo '❌ Warning: Could not verify game type was added. Check transaction status.'
+        fi
+        
+        echo '✅ AddGameType operations completed successfully'
+      "
+}
+
 docker compose up -d op-batcher
 
 sleep 10
@@ -52,25 +189,8 @@ VM="0x${VM_RAW: -40}"
 ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
 L2_CHAIN_ID=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "l2ChainId()")
 
-docker run --rm \
-  --network "$DOCKER_NETWORK" \
-  -v "$(pwd)/$CONFIG_DIR:/deployments" \
-  -w /app/packages/contracts-bedrock/scripts/deploy \
-  "${OP_CONTRACTS_IMAGE_TAG}" \
-  bash -c "
-    set -e
-
-    echo '🚀 Executing AddGameType script...'
-
-    forge script AddGameType.s.sol:AddGameType \
-      --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
-      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,1,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$TEMP_CLOCK_EXTENSION,$TEMP_MAX_CLOCK_DURATION,1000000000000000000,$VM,true,\"123\")' \
-      --broadcast \
-      --private-key $DEPLOYER_PRIVATE_KEY \
-      --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
-
-    echo '✅ AddGameType operations completed successfully'
-  "
+# Call the function to add game type 1 (permissioned) via Transactor
+add_game_type_via_transactor 1 true $TEMP_CLOCK_EXTENSION $TEMP_MAX_CLOCK_DURATION $ABSOLUTE_PRESTATE
 
 export GAME_TYPE=1
 docker compose up -d op-proposer
@@ -164,19 +284,17 @@ PERMISSIONED_GAME="0x${PERMISSIONED_GAME_RAW: -40}"
 ABSOLUTE_PRESTATE=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "absolutePrestate()")
 ANCHOR_STATE_REGISTRY=$(cast call --rpc-url $RPC_URL $PERMISSIONED_GAME "anchorStateRegistry()")
 
+# Call the function to add game type 0 (permissionless) via Transactor
+add_game_type_via_transactor 0 false $CLOCK_EXTENSION $MAX_CLOCK_DURATION $ABSOLUTE_PRESTATE
+
 docker run --rm \
   --network "$DOCKER_NETWORK" \
   -v "$(pwd)/$CONFIG_DIR:/deployments" \
-  -w /app/packages/contracts-bedrock/scripts/deploy \
+  -w /app \
   "${OP_CONTRACTS_IMAGE_TAG}" \
   bash -c "
-    forge script AddGameType.s.sol:AddGameType \
-      --sig 'run((address,address,address,address,address,uint32,bytes32,uint256,uint256,uint64,uint64,uint256,address,bool,string))' \
-      '($ADMIN_OWNER_ADDRESS,$OPCM_IMPL_ADDRESS,$SYSTEM_CONFIG_PROXY_ADDRESS,$PROXY_ADMIN,0x0000000000000000000000000000000000000000,0,$ABSOLUTE_PRESTATE,$MAX_GAME_DEPTH,$SPLIT_DEPTH,$CLOCK_EXTENSION,$MAX_CLOCK_DURATION,1000000000000000000,$VM,false,\"123\")' \
-      --broadcast \
-      --private-key $DEPLOYER_PRIVATE_KEY \
-      --rpc-url $L1_RPC_URL_IN_DOCKER -vvvv
-
+    set -e
+    
     echo '📋 Gathering contract addresses and generating calldata...'
     DISPUTE_GAME_FACTORY_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'disputeGameFactory()(address)')
     OPTIMISM_PORTAL_ADDR=\$(cast call --rpc-url $L1_RPC_URL_IN_DOCKER $SYSTEM_CONFIG_PROXY_ADDRESS 'optimismPortal()(address)')
